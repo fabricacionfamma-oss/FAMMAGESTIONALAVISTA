@@ -13,26 +13,33 @@ from datetime import timedelta
 # ==========================================
 st.set_page_config(page_title="Reportes FAMMA", layout="wide", page_icon="📊")
 
-# DICCIONARIO OFICIAL FAMMA
+# DICCIONARIO OFICIAL FAMMA (Adaptado a los Códigos Internos de SQL)
 MAQUINAS_MAP = {
     # --- ESTAMPADO ---
-    "LINEA 1.5": "LINEA 1.5",
-    "LINEA 2": "LINEA 2",
-    "LINEA 3": "LINEA 3",
-    "LINEA": "LINEA 3",  # Por si en Wiidem está anotada sin el número
-    "LINEA 4": "LINEA 4",
+    "L-1.2": "LINEA 1.2",
+    "L-1.4": "LINEA 1.4",
+    "L-1.5": "LINEA 1.5",
+    "L-2": "LINEA 2",
+    "L-3": "LINEA 3",
+    "L-4": "LINEA 4",
+    # (Nombres de UI por si acaso)
+    "LINEA 1.2": "LINEA 1.2", "LINEA 1.4": "LINEA 1.4", "LINEA 1.5": "LINEA 1.5",
+    "LINEA 2": "LINEA 2", "LINEA 3": "LINEA 3", "LINEA 4": "LINEA 4",
     
     # --- SOLDADURA ---
-    "Cell 13 Famma": "CELDAS",
-    "Cell 14 Famma": "CELDAS",
-    "Cell 15A Famma": "CELDAS",
-    "Cell 15B Famma": "CELDAS",
-    "Cell 16 Famma": "CELDAS",
-    "Cell 17 Famma": "CELDAS",
-    "Cell 3 Famma": "CELDAS",
-    "PRP 1": "PRP",
-    "PRP 2": "PRP",
-    "PRP 3": "PRP"
+    "CEL01": "CELDAS", "CEL02": "CELDAS", "CEL03": "CELDAS", "CEL04": "CELDAS",
+    "CEL05": "CELDAS", "CEL06": "CELDAS", "CEL07": "CELDAS", "CEL08": "CELDAS",
+    "CEL09": "CELDAS", "CEL10": "CELDAS", "CEL11": "CELDAS", "CEL12": "CELDAS",
+    "CEL13": "CELDAS", "CEL14": "CELDAS", "CEL15A": "CELDAS", "CEL15B": "CELDAS",
+    "CEL16": "CELDAS", "CEL17": "CELDAS",
+    
+    "PRP01": "PRP", "PRP02": "PRP", "PRP03": "PRP", 
+    "PRP04": "PRP", "PRP05": "PRP", "PRP06": "PRP",
+    
+    "MIG01": "MIG", "MIG02": "MIG",
+    # (Nombres de UI por si acaso)
+    "Cell 3 Famma": "CELDAS", "Cell 13 Famma": "CELDAS", "Cell 14 Famma": "CELDAS",
+    "PRP 1": "PRP", "PRP 2": "PRP", "PRP 3": "PRP"
 }
 
 GRUPOS_ESTAMPADO = ['LINEA 1.5', 'LINEA 2', 'LINEA 3', 'LINEA 4']
@@ -93,7 +100,7 @@ def save_chart(fig, w=600, h=300):
         fig.write_image(tmp.name, engine="kaleido", scale=2.5); return tmp.name
 
 # ==========================================
-# 2. CARGA DE DATOS (CONECTADO A TABLAS DIARIAS)
+# 2. CARGA DE DATOS (CONECTADO A TABLAS MENSUALES)
 # ==========================================
 @st.cache_data(ttl=300)
 def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
@@ -102,20 +109,15 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         
         ini_str = fecha_ini.strftime('%Y-%m-%d 00:00:00')
         fin_str = fecha_fin.strftime('%Y-%m-%d 23:59:59')
-        ini_year_str = f"{anio}-01-01 00:00:00"
         
-        # 1. KPIs: Sumando directamente la tabla diaria (PROD_D_03)
-        q_metrics = f"SELECT c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas, SUM(COALESCE(p.ProductiveTime, 0)) as T_Operativo, SUM(COALESCE(p.DownTime, 0)) as T_Parada, SUM(COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado, SUM(COALESCE(p.Performance, 0) * COALESCE(p.ProductiveTime, 0)) as Perf_Num, SUM(COALESCE(p.Availability, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as Disp_Num, SUM(COALESCE(p.Quality, 0) * (COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0))) as Cal_Num, SUM(COALESCE(p.Oee, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as OEE_Num FROM PROD_D_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Date BETWEEN '{ini_str}' AND '{fin_str}' GROUP BY c.Name"
-        
-        # 2. Fallas
+        q_metrics = f"SELECT c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas, SUM(COALESCE(p.ProductiveTime, 0)) as T_Operativo, SUM(COALESCE(p.DownTime, 0)) as T_Parada, SUM(COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado, SUM(COALESCE(p.Performance, 0) * COALESCE(p.ProductiveTime, 0)) as Perf_Num, SUM(COALESCE(p.Availability, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as Disp_Num, SUM(COALESCE(p.Quality, 0) * (COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0))) as Cal_Num, SUM(COALESCE(p.Oee, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as OEE_Num FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name"
         q_event = f"SELECT c.Name as Máquina, e.Interval as [Tiempo (Min)], t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4] FROM EVENT_01 e LEFT JOIN CELL c ON e.CellId = c.CellId LEFT JOIN EVENTTYPE t1 ON e.EventTypeLevel1 = t1.EventTypeId LEFT JOIN EVENTTYPE t2 ON e.EventTypeLevel2 = t2.EventTypeId LEFT JOIN EVENTTYPE t3 ON e.EventTypeLevel3 = t3.EventTypeId LEFT JOIN EVENTTYPE t4 ON e.EventTypeLevel4 = t4.EventTypeId WHERE e.Date BETWEEN '{ini_str}' AND '{fin_str}'"
         
-        # 3. Piezas Top 5: Tabla diaria PROD_D_01 con LEFT JOIN para "S/C"
-        q_piezas = f"SELECT c.Name as Máquina, COALESCE(pr.Code, 'S/C') as Pieza, SUM(COALESCE(p.Scrap, 0)) as Scrap, SUM(COALESCE(p.Rework, 0)) as RT FROM PROD_D_01 p JOIN CELL c ON p.CellId = c.CellId LEFT JOIN PRODUCT pr ON p.ProductId = pr.ProductId WHERE p.Date BETWEEN '{ini_str}' AND '{fin_str}' GROUP BY c.Name, pr.Code"
+        # LEFT JOIN ACTIVO: Atrapa piezas sin código
+        q_piezas = f"SELECT c.Name as Máquina, COALESCE(pr.Code, 'S/C') as Pieza, SUM(COALESCE(p.Scrap, 0)) as Scrap, SUM(COALESCE(p.Rework, 0)) as RT FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId LEFT JOIN PRODUCT pr ON p.ProductId = pr.ProductId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name, pr.Code"
 
-        # 4. Tendencias Acumuladas YTD (Agrupadas por el mes de los registros diarios)
-        q_trend_oee_monthly = f"SELECT MONTH(p.Date) as Month, c.Name as Máquina, SUM(COALESCE(p.ProductiveTime, 0)) as T_Operativo, SUM(COALESCE(p.DownTime, 0)) as T_Parada, SUM(COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado, SUM(COALESCE(p.Performance, 0) * COALESCE(p.ProductiveTime, 0)) as Perf_Num, SUM(COALESCE(p.Availability, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as Disp_Num, SUM(COALESCE(p.Quality, 0) * (COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0))) as Cal_Num, SUM(COALESCE(p.Oee, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as OEE_Num FROM PROD_D_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Date BETWEEN '{ini_year_str}' AND '{fin_str}' GROUP BY MONTH(p.Date), c.Name"
-        q_trend_piezas_monthly = f"SELECT MONTH(p.Date) as Month, c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas, SUM(COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0)) as Totales FROM PROD_D_01 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Date BETWEEN '{ini_year_str}' AND '{fin_str}' GROUP BY MONTH(p.Date), c.Name"
+        q_trend_oee_monthly = f"SELECT p.Month, c.Name as Máquina, SUM(COALESCE(p.ProductiveTime, 0)) as T_Operativo, SUM(COALESCE(p.DownTime, 0)) as T_Parada, SUM(COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado, SUM(COALESCE(p.Performance, 0) * COALESCE(p.ProductiveTime, 0)) as Perf_Num, SUM(COALESCE(p.Availability, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as Disp_Num, SUM(COALESCE(p.Quality, 0) * (COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0))) as Cal_Num, SUM(COALESCE(p.Oee, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as OEE_Num FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month <= {mes} GROUP BY p.Month, c.Name"
+        q_trend_piezas_monthly = f"SELECT p.Month, c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas, SUM(COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0)) as Totales FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month <= {mes} GROUP BY p.Month, c.Name"
 
         df_metrics = conn.query(q_metrics).fillna(0)
         df_raw = conn.query(q_event)
@@ -190,14 +192,14 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
 def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw, df_trend):
     theme_color = (15, 76, 129) if area.upper() == "ESTAMPADO" else (211, 84, 0); theme_hex = '#%02x%02x%02x' % theme_color
     grupos_area = GRUPOS_ESTAMPADO if area.upper() == "ESTAMPADO" else GRUPOS_SOLDADURA
-    mapa_limpio = {str(k).strip().upper(): str(v).strip().upper() for k, v in MAQUINAS_MAP.items()}
+    mapa_limpio = {str(k).strip(): str(v).strip() for k, v in MAQUINAS_MAP.items()}
     pdf = ReportePDF(f"GESTIÓN A LA VISTA - {area}", label_reporte, theme_color)
     
     df_m = df_metrics_pdf.copy(); df_t = df_trend.copy(); df_r = df_pdf_raw.copy()
         
     for d in [df_m, df_t, df_r]: 
         if not d.empty and 'Máquina' in d.columns:
-            d['Grupo'] = d['Máquina'].astype(str).str.strip().str.upper().map(mapa_limpio).fillna('Otro')
+            d['Grupo'] = d['Máquina'].astype(str).str.strip().map(mapa_limpio).fillna('Otro')
         else: d['Grupo'] = 'Otro'
             
     df_m = df_m[df_m['Grupo'].isin(grupos_area)]; df_t = df_t[df_t['Grupo'].isin(grupos_area)]; df_r = df_r[df_r['Grupo'].isin(grupos_area)]
@@ -383,7 +385,7 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
     
     for d in [df_t, df_p]: 
         if not d.empty and 'Máquina' in d.columns:
-            d['Grupo'] = d['Máquina'].astype(str).str.strip().str.upper().map(mapa).fillna('Otro')
+            d['Grupo'] = d['Máquina'].astype(str).str.strip().map(mapa).fillna('Otro')
         else: d['Grupo'] = 'Otro'
 
     df_t = df_t[df_t['Grupo'].isin(grupos)]; df_p = df_p[df_p['Grupo'].isin(grupos)]
