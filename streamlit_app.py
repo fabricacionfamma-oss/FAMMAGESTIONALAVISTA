@@ -13,7 +13,7 @@ from datetime import timedelta
 # ==========================================
 st.set_page_config(page_title="Reportes FAMMA", layout="wide", page_icon="📊")
 
-# DICCIONARIO OFICIAL FAMMA EN MAYÚSCULAS PARA EVITAR ERRORES DE ESPACIOS
+# DICCIONARIO OFICIAL FAMMA (Coincidencia exacta con la Base de Datos)
 MAQUINAS_MAP = {
     # --- ESTAMPADO ---
     "LINEA 1.2": "LINEA 1.2",
@@ -24,34 +24,17 @@ MAQUINAS_MAP = {
     "LINEA 4": "LINEA 4",
     
     # --- SOLDADURA ---
-    "CELL 1 FAMMA": "CELDAS",
-    "CELL 2 FAMMA": "CELDAS",
-    "CELL 3 FAMMA": "CELDAS",
-    "CELL 4 FAMMA": "CELDAS",
-    "CELL 5 FAMMA": "CELDAS",
-    "CELL 6 FAMMA": "CELDAS",
-    "CELL 7 FAMMA": "CELDAS",
-    "CELL 8 FAMMA": "CELDAS",
-    "CELL 9 FAMMA": "CELDAS",
-    "CELL 10 FAMMA": "CELDAS",
-    "CELL 11 FAMMA": "CELDAS",
-    "CELL 12 FAMMA": "CELDAS",
-    "CELL 13 FAMMA": "CELDAS",
-    "CELL 14 FAMMA": "CELDAS",
-    "CELL 15A FAMMA": "CELDAS",
-    "CELL 15B FAMMA": "CELDAS",
-    "CELL 16 FAMMA": "CELDAS",
-    "CELL 17 FAMMA": "CELDAS",
+    "Cell 1 Famma": "CELDAS", "Cell 2 Famma": "CELDAS", "Cell 3 Famma": "CELDAS",
+    "Cell 4 Famma": "CELDAS", "Cell 5 Famma": "CELDAS", "Cell 6 Famma": "CELDAS",
+    "Cell 7 Famma": "CELDAS", "Cell 8 Famma": "CELDAS", "Cell 9 Famma": "CELDAS",
+    "Cell 10 Famma": "CELDAS", "Cell 11 Famma": "CELDAS", "Cell 12 Famma": "CELDAS",
+    "Cell 13 Famma": "CELDAS", "Cell 14 Famma": "CELDAS", "Cell 15A Famma": "CELDAS",
+    "Cell 15B Famma": "CELDAS", "Cell 16 Famma": "CELDAS", "Cell 17 Famma": "CELDAS",
     
-    "PRP 1": "PRP",
-    "PRP 2": "PRP",
-    "PRP 3": "PRP",
-    "PRP 4": "PRP",
-    "PRP 5": "PRP",
-    "PRP 6": "PRP",
+    "PRP 1": "PRP", "PRP 2": "PRP", "PRP 3": "PRP",
+    "PRP 4": "PRP", "PRP 5": "PRP", "PRP 6": "PRP",
     
-    "MIG 1": "MIG",
-    "MIG 2": "MIG",
+    "MIG 1": "MIG", "MIG 2": "MIG",
 }
 
 GRUPOS_ESTAMPADO = ['LINEA 1.2', 'LINEA 1.4', 'LINEA 1.5', 'LINEA 2', 'LINEA 3', 'LINEA 4']
@@ -112,7 +95,7 @@ def save_chart(fig, w=600, h=300):
         fig.write_image(tmp.name, engine="kaleido", scale=2.5); return tmp.name
 
 # ==========================================
-# 2. CARGA DE DATOS (LECTURA PURA SIN RECÁLCULO)
+# 2. CARGA DE DATOS 
 # ==========================================
 @st.cache_data(ttl=300)
 def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
@@ -123,22 +106,13 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         fin_str = fecha_fin.strftime('%Y-%m-%d 23:59:59')
         ini_year_str = f"{anio}-01-01 00:00:00"
         
-        # --- 1. OEE Y PORCENTAJES PUROS (SIN RE-CALCULAR) ---
-        q_oee_m = f"SELECT c.Name as Máquina, p.Performance as Perf_Num, p.Availability as Disp_Num, p.Quality as Cal_Num, p.Oee as OEE_Num FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month = {mes}"
+        # --- 1. OEE Y PORCENTAJES (CON TIEMPOS PARA PONDERAR) ---
+        q_oee_m = f"SELECT c.Name as Máquina, p.Performance as Perf_Num, p.Availability as Disp_Num, p.Quality as Cal_Num, p.Oee as OEE_Num, COALESCE(p.ProductiveTime, 0) as T_Operativo, (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month = {mes}"
         df_oee = conn.query(q_oee_m).fillna(0)
-        
-        if df_oee.empty:
-            # FALLBACK A DIARIAS: PROMEDIO DE PORCENTAJES
-            q_oee_d = f"SELECT c.Name as Máquina, AVG(p.Performance) as Perf_Num, AVG(p.Availability) as Disp_Num, AVG(p.Quality) as Cal_Num, AVG(p.Oee) as OEE_Num FROM PROD_D_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Date BETWEEN '{ini_str}' AND '{fin_str}' GROUP BY c.Name"
-            df_oee = conn.query(q_oee_d).fillna(0)
 
         # --- 2. PIEZAS ---
         q_pcs_m = f"SELECT c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name"
         df_pcs = conn.query(q_pcs_m).fillna(0)
-        
-        if df_pcs.empty:
-            q_pcs_d = f"SELECT c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas FROM PROD_D_01 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Date BETWEEN '{ini_str}' AND '{fin_str}' GROUP BY c.Name"
-            df_pcs = conn.query(q_pcs_d).fillna(0)
 
         if not df_oee.empty and not df_pcs.empty:
             df_metrics = pd.merge(df_oee, df_pcs, on='Máquina', how='outer').fillna(0)
@@ -148,24 +122,13 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         # --- 3. TOP 5 PIEZAS (SCRAP/RT) ---
         q_top_m = f"SELECT c.Name as Máquina, COALESCE(pr.Code, 'S/C') as Pieza, SUM(COALESCE(p.Scrap, 0)) as Scrap, SUM(COALESCE(p.Rework, 0)) as RT FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId LEFT JOIN PRODUCT pr ON p.ProductId = pr.ProductId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name, pr.Code"
         df_piezas = conn.query(q_top_m).fillna(0)
-        if df_piezas.empty:
-            q_top_d = f"SELECT c.Name as Máquina, COALESCE(pr.Code, 'S/C') as Pieza, SUM(COALESCE(p.Scrap, 0)) as Scrap, SUM(COALESCE(p.Rework, 0)) as RT FROM PROD_D_01 p JOIN CELL c ON p.CellId = c.CellId LEFT JOIN PRODUCT pr ON p.ProductId = pr.ProductId WHERE p.Date BETWEEN '{ini_str}' AND '{fin_str}' GROUP BY c.Name, pr.Code"
-            df_piezas = conn.query(q_top_d).fillna(0)
 
-        # --- 4. TENDENCIAS (PROMEDIOS DIRECTOS DE PORCENTAJES) ---
-        q_trend_oee_m = f"SELECT p.Month, c.Name as Máquina, p.Performance as Perf_Num, p.Availability as Disp_Num, p.Quality as Cal_Num, p.Oee as OEE_Num FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month <= {mes}"
+        # --- 4. TENDENCIAS MENSUALES (HISTÓRICO DEL AÑO) ---
+        q_trend_oee_m = f"SELECT p.Month, c.Name as Máquina, p.Performance as Perf_Num, p.Availability as Disp_Num, p.Quality as Cal_Num, p.Oee as OEE_Num, COALESCE(p.ProductiveTime, 0) as T_Operativo, (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month <= {mes}"
         q_trend_pcs_m = f"SELECT p.Month, c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas, SUM(COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0)) as Totales FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month <= {mes} GROUP BY p.Month, c.Name"
         
         df_t_oee = conn.query(q_trend_oee_m).fillna(0)
         df_t_pcs = conn.query(q_trend_pcs_m).fillna(0)
-
-        if df_t_oee.empty:
-            q_trend_oee_d = f"SELECT MONTH(p.Date) as Month, c.Name as Máquina, AVG(p.Performance) as Perf_Num, AVG(p.Availability) as Disp_Num, AVG(p.Quality) as Cal_Num, AVG(p.Oee) as OEE_Num FROM PROD_D_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Date BETWEEN '{ini_year_str}' AND '{fin_str}' GROUP BY MONTH(p.Date), c.Name"
-            df_t_oee = conn.query(q_trend_oee_d).fillna(0)
-        
-        if df_t_pcs.empty:
-            q_trend_pcs_d = f"SELECT MONTH(p.Date) as Month, c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas, SUM(COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0)) as Totales FROM PROD_D_01 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Date BETWEEN '{ini_year_str}' AND '{fin_str}' GROUP BY MONTH(p.Date), c.Name"
-            df_t_pcs = conn.query(q_trend_pcs_d).fillna(0)
 
         if not df_t_oee.empty and not df_t_pcs.empty:
             df_trend = pd.merge(df_t_pcs, df_t_oee, on=['Month', 'Máquina'], how='outer').fillna(0)
@@ -176,13 +139,13 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         q_event = f"SELECT c.Name as Máquina, e.Interval as [Tiempo (Min)], t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4] FROM EVENT_01 e LEFT JOIN CELL c ON e.CellId = c.CellId LEFT JOIN EVENTTYPE t1 ON e.EventTypeLevel1 = t1.EventTypeId LEFT JOIN EVENTTYPE t2 ON e.EventTypeLevel2 = t2.EventTypeId LEFT JOIN EVENTTYPE t3 ON e.EventTypeLevel3 = t3.EventTypeId LEFT JOIN EVENTTYPE t4 ON e.EventTypeLevel4 = t4.EventTypeId WHERE e.Date BETWEEN '{ini_str}' AND '{fin_str}'"
         df_raw = conn.query(q_event)
 
-        # === BLINDAJE DE COLUMNAS ===
-        cols_metrics = ['Buenas', 'Retrabajo', 'Observadas', 'Perf_Num', 'Disp_Num', 'Cal_Num', 'OEE_Num']
+        # === BLINDAJE Y CONVERSIÓN ===
+        cols_metrics = ['Buenas', 'Retrabajo', 'Observadas', 'Perf_Num', 'Disp_Num', 'Cal_Num', 'OEE_Num', 'T_Operativo', 'T_Planificado']
         for c in cols_metrics:
             if c not in df_metrics.columns: df_metrics[c] = 0
             df_metrics[c] = pd.to_numeric(df_metrics[c], errors='coerce').fillna(0)
 
-        for col in ['Month', 'Perf_Num', 'Disp_Num', 'Cal_Num', 'OEE_Num', 'Buenas', 'Retrabajo', 'Observadas', 'Totales']:
+        for col in ['Month', 'Perf_Num', 'Disp_Num', 'Cal_Num', 'OEE_Num', 'Buenas', 'Retrabajo', 'Observadas', 'Totales', 'T_Operativo', 'T_Planificado']:
             if col not in df_trend.columns: df_trend[col] = 0
             df_trend[col] = pd.to_numeric(df_trend[col], errors='coerce').fillna(0)
 
@@ -233,7 +196,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # ==========================================
-# 3. MOTOR: GESTIÓN A LA VISTA (DISPONIBILIDAD)
+# 3. MOTOR: GESTIÓN A LA VISTA (OEE PONDERADO EXACTO)
 # ==========================================
 def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw, df_trend):
     if area.upper() == "ESTAMPADO":
@@ -278,15 +241,27 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
         pdf.cell(40, 6, label_reporte, 1, 0, 'C', fill=True); pdf.set_font("Arial", 'B', 10); pdf.cell(197, 6, "EMPRESA: FAMMA", 1, 0, 'C', fill=True); pdf.set_font("Arial", '', 10); pdf.cell(40, 6, "DISPONIBILIDAD", 1, 1, 'C', fill=True)
 
         if not df_m_target.empty:
-            valid_m = df_m_target[df_m_target['OEE_Num'] > 0]
+            valid_m = df_m_target.copy()
         else:
             valid_m = pd.DataFrame()
 
-        # PROMEDIOS DIRECTOS (SIN RECÁLCULOS SEGÚN MANUAL FAMMA)
-        v_oee = valid_m['OEE_Num'].mean() if not valid_m.empty else 0
-        v_perf = valid_m['Perf_Num'].mean() if not valid_m.empty else 0
-        v_disp = valid_m['Disp_Num'].mean() if not valid_m.empty else 0
-        v_cal = valid_m['Cal_Num'].mean() if not valid_m.empty else 0
+        # --- MOTOR MATEMÁTICO: PROMEDIO PONDERADO EXACTO A WIIDEM ---
+        t_plan = valid_m['T_Planificado'].sum() if not valid_m.empty else 0
+        t_op = valid_m['T_Operativo'].sum() if not valid_m.empty else 0
+        
+        if t_plan > 0:
+            v_oee = (valid_m['OEE_Num'] * valid_m['T_Planificado']).sum() / t_plan
+            v_disp = (valid_m['Disp_Num'] * valid_m['T_Planificado']).sum() / t_plan
+        else:
+            v_oee = valid_m['OEE_Num'].mean() if not valid_m.empty else 0
+            v_disp = valid_m['Disp_Num'].mean() if not valid_m.empty else 0
+
+        if t_op > 0:
+            v_perf = (valid_m['Perf_Num'] * valid_m['T_Operativo']).sum() / t_op
+            v_cal = (valid_m['Cal_Num'] * valid_m['T_Operativo']).sum() / t_op
+        else:
+            v_perf = valid_m['Perf_Num'].mean() if not valid_m.empty else 0
+            v_cal = valid_m['Cal_Num'].mean() if not valid_m.empty else 0
         
         if v_oee > 1.5 or v_perf > 1.5 or v_disp > 1.5:
             v_oee /= 100.0; v_perf /= 100.0; v_disp /= 100.0; v_cal /= 100.0
@@ -313,24 +288,33 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
         def add_trend_bar(df_in, col, title, x_pos, y_pos, min_t, max_t, draw_large=False):
             if df_in.empty: return
             
-            df_valid = df_in[df_in['OEE_Num'] > 0]
-            if df_valid.empty: return
-            
-            df_g = df_valid.groupby('Month')[['OEE_Num', 'Perf_Num', 'Disp_Num', 'Cal_Num']].mean().reset_index()
-            
-            if col == 'OEE': df_g['Val'] = df_g['OEE_Num']
-            elif col == 'PERFORMANCE': df_g['Val'] = df_g['Perf_Num']
-            elif col == 'DISPONIBILIDAD': df_g['Val'] = df_g['Disp_Num']
-            elif col == 'CALIDAD': df_g['Val'] = df_g['Cal_Num']
-            
+            # --- CÁLCULO PONDERADO POR MES ---
+            res_mensual = []
+            for m, grp in df_in.groupby('Month'):
+                s_plan = grp['T_Planificado'].sum()
+                s_op = grp['T_Operativo'].sum()
+                
+                if col == 'OEE': val = (grp['OEE_Num'] * grp['T_Planificado']).sum() / s_plan if s_plan > 0 else grp['OEE_Num'].mean()
+                elif col == 'PERFORMANCE': val = (grp['Perf_Num'] * grp['T_Operativo']).sum() / s_op if s_op > 0 else grp['Perf_Num'].mean()
+                elif col == 'DISPONIBILIDAD': val = (grp['Disp_Num'] * grp['T_Planificado']).sum() / s_plan if s_plan > 0 else grp['Disp_Num'].mean()
+                elif col == 'CALIDAD': val = (grp['Cal_Num'] * grp['T_Operativo']).sum() / s_op if s_op > 0 else grp['Cal_Num'].mean()
+                
+                res_mensual.append({'Month': int(m), 'Val': val})
+                
+            if not res_mensual: return
+            df_g = pd.DataFrame(res_mensual)
             if df_g['Val'].max() > 1.5: df_g['Val'] /= 100.0
 
-            # ACUMULADO YTD (PROMEDIO)
+            # --- ACUMULADO YTD (PROMEDIO PONDERADO DEL AÑO) ---
+            s_plan_tot = df_in['T_Planificado'].sum()
+            s_op_tot = df_in['T_Operativo'].sum()
+            
             ytd_v = 0
-            if col == 'OEE': ytd_v = df_valid['OEE_Num'].mean()
-            elif col == 'PERFORMANCE': ytd_v = df_valid['Perf_Num'].mean()
-            elif col == 'DISPONIBILIDAD': ytd_v = df_valid['Disp_Num'].mean()
-            elif col == 'CALIDAD': ytd_v = df_valid['Cal_Num'].mean()
+            if col == 'OEE': ytd_v = (df_in['OEE_Num'] * df_in['T_Planificado']).sum() / s_plan_tot if s_plan_tot > 0 else df_in['OEE_Num'].mean()
+            elif col == 'PERFORMANCE': ytd_v = (df_in['Perf_Num'] * df_in['T_Operativo']).sum() / s_op_tot if s_op_tot > 0 else df_in['Perf_Num'].mean()
+            elif col == 'DISPONIBILIDAD': ytd_v = (df_in['Disp_Num'] * df_in['T_Planificado']).sum() / s_plan_tot if s_plan_tot > 0 else df_in['Disp_Num'].mean()
+            elif col == 'CALIDAD': ytd_v = (df_in['Cal_Num'] * df_in['T_Operativo']).sum() / s_op_tot if s_op_tot > 0 else df_in['Cal_Num'].mean()
+            
             if ytd_v > 1.5: ytd_v /= 100.0
 
             def get_c(v): return '#E74C3C' if v < min_t else ('#F1C40F' if v < max_t else '#2ECC71')
@@ -376,6 +360,7 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             add_trend_bar(df_t_target, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%) - EVOLUCIÓN MENSUAL', 10, 102, 0.75, 0.85)
             add_trend_bar(df_t_target, 'CALIDAD', 'CALIDAD (%) - EVOLUCIÓN MENSUAL', 150, 102, 0.75, 0.85)
             
+            # --- PROTECCIÓN ANTI-CIERRE DEL PDF EN LOS FALLOS ---
             pdf.draw_panel(10, 156, 136, 45); pdf.draw_panel(149, 156, 138, 45)
             pdf.set_xy(10, 156); pdf.set_font("Times", 'B', 11); pdf.set_text_color(0); pdf.cell(136, 6, "TOP 5 FALLOS", border=0, ln=True, align='C')
             
@@ -406,6 +391,10 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
                 fig_stack.update_traces(texttemplate='<b>%{x:.1%}</b>', textposition='inside', marker_line_color='rgba(0,0,0,0.8)', marker_line_width=2, opacity=0.9, textfont=dict(color='black', size=11))
                 fig_stack.update_layout(barmode='stack', title=dict(text="<b>PROPORCIÓN DE PÉRDIDAS ÁREAS MACRO (100%)</b>", font=dict(family="Times", size=13, color="black")), xaxis=dict(visible=False, range=[0, 1]), yaxis=dict(visible=False), margin=dict(t=30, b=5, l=10, r=10), legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, title="", font=dict(size=10)))
                 img_stack = save_chart(fig_stack, 600, 180); pdf.image(img_stack, 151, 158, 134); os.remove(img_stack)
+            else:
+                pdf.set_xy(10, 175); pdf.set_font("Arial", 'I', 10); pdf.set_text_color(100)
+                pdf.cell(136, 6, "Excelente. No hay fallos registrados en este período.", 0, 1, 'C')
+                pdf.set_xy(149, 175); pdf.cell(138, 6, "Sin datos de fallas para graficar.", 0, 1, 'C')
             
     return pdf.output(dest='S').encode('latin-1')
 
@@ -448,6 +437,9 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         pdf.cell(20, 6, str(mes_sel), 1, 0, 'C', fill=True); pdf.cell(20, 6, str(anio_sel), 1, 0, 'C', fill=True); pdf.set_font("Arial", 'B', 10); pdf.cell(197, 6, "EMPRESA: FAMMA", 1, 0, 'C', fill=True); pdf.set_font("Arial", '', 10); pdf.cell(40, 6, "PRODUCTIVO", 1, 1, 'C', fill=True)
 
         if df_t_target.empty: continue
+        
+        for col in ['Buenas', 'Observadas', 'Retrabajo', 'Totales']:
+            if col in df_t_target.columns: df_t_target[col] = pd.to_numeric(df_t_target[col], errors='coerce').fillna(0)
 
         df_ev = df_t_target.groupby('Month')[['Buenas', 'Observadas', 'Retrabajo', 'Totales']].sum().reset_index()
         if 'Month' in df_ev.columns: df_ev['Month'] = df_ev['Month'].astype(int)
@@ -455,7 +447,8 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         df_ev['Totales_Div'] = df_ev['Totales'].apply(lambda x: x if x > 0 else 1)
         df_ev['% Scrap'] = ((df_ev['Observadas'] / df_ev['Totales_Div']) * 100).round(2)
         df_ev['% RT'] = ((df_ev['Retrabajo'] / df_ev['Totales_Div']) * 100).round(2)
-        df_ev['Mes_Str'] = df_ev['Month'].map({1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'})
+        meses_map = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
+        df_ev['Mes_Str'] = df_ev['Month'].map(meses_map)
 
         f1 = px.bar(df_ev, x='Mes_Str', y='Totales', color_discrete_sequence=[theme_hex]); f1.update_traces(texttemplate='<b>%{y:.3s}</b>')
         f2 = px.bar(df_ev, x='Mes_Str', y='% Scrap', color_discrete_sequence=[theme_hex]); f2.update_traces(texttemplate='<b>%{y:.2f}%</b>')
@@ -464,8 +457,8 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         titles = ["PIEZAS PRODUCIDAS MES A MES", "% DE SCRAP MES A MES", "% DE RT MES A MES"]
         for i, f in enumerate([f1, f2, f3]): 
             max_y = df_ev['Totales'].max() if i==0 else (df_ev['% Scrap'].max() if i==1 else df_ev['% RT'].max())
-            upper_limit = max_y * 1.3 if max_y > 0 else 1
-            if i != 0: upper_limit = max(0.2, upper_limit)
+            if i == 0: upper_limit = max_y * 1.3 if max_y > 0 else 1
+            else: upper_limit = max(0.2, max_y * 1.3)
             f.update_yaxes(range=[0, upper_limit])
             f.update_layout(title=dict(text=f"<b>{titles[i]}</b>", font=dict(family="Times", size=13, color="black")), margin=dict(l=10, r=10, t=30, b=20), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis=dict(visible=False))
             f.update_traces(textposition="outside", cliponaxis=False, textfont=dict(color='black', size=11, family="Arial"), marker_line_color='rgba(0,0,0,0.8)', marker_line_width=2, opacity=0.85)
@@ -518,7 +511,6 @@ ini = pd.to_datetime(f"{a_sel}-{m_sel}-01")
 fin = pd.to_datetime(f"{a_sel}-{m_sel}-{calendar.monthrange(a_sel, m_sel)[1]}")
 lab = f"{m_sel}/{a_sel}"
 
-# Pre-Cargar y Previsualizar los datos para saber si SQL nos devuelve información útil
 with st.spinner("Conectando con la base de datos de FAMMA..."):
     df_m, df_r, df_t, df_p = fetch_data_from_db(ini, fin, m_sel, a_sel)
 
