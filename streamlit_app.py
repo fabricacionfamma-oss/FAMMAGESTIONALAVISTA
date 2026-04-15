@@ -11,27 +11,32 @@ from datetime import timedelta
 # ==========================================
 # 0. CONFIGURACIÓN Y CONSTANTES FAMMA
 # ==========================================
-st.set_page_config(page_title="Gestión a la Vista - FAMMA", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Reportes FAMMA", layout="wide", page_icon="📊")
 
-# DICCIONARIO EXACTO BASADO EN LA IMAGEN DE FAMMA
+# DICCIONARIO OFICIAL FAMMA
 MAQUINAS_MAP = {
     # --- ESTAMPADO ---
-    "BAL-002": "BALANCIN", "BAL-003": "BALANCIN", "BAL-005": "BALANCIN", "BAL-006": "BALANCIN", 
-    "BAL-007": "BALANCIN", "BAL-008": "BALANCIN", "BAL-009": "BALANCIN", "BAL-010": "BALANCIN", 
-    "BAL-012": "BALANCIN", "BAL-013": "BALANCIN", "BAL-014": "BALANCIN", "BAL-015": "BALANCIN",
-    "P-011": "HIDRAULICAS", "P-012": "HIDRAULICAS", "P-013": "HIDRAULICAS", "P-016": "HIDRAULICAS",
-    "P-015": "MECANICAS", "P-022": "MECANICAS",
-    "P-023": "PRENSAS", "P-024": "PRENSAS",
-
+    "LINEA 1.5": "LINEA 1.5",
+    "LINEA 2": "LINEA 2",
+    "LINEA 3": "LINEA 3",
+    "LINEA": "LINEA 3",  # Por si en Wiidem está anotada sin el número
+    "LINEA 4": "LINEA 4",
+    
     # --- SOLDADURA ---
-    "Celda 01": "CELDAS ROBOTICAS", "Celda 02": "CELDAS ROBOTICAS",
-    "DOB-001": "DOBLADORAS", "DOB-002": "DOBLADORAS",
-    "SOP-003": "SOLDADURA PUNTO", "SOP-005": "SOLDADURA PUNTO", 
-    "SOP-010": "SOLDADURA PUNTO", "SOP-014": "SOLDADURA PUNTO"
+    "Cell 13 Famma": "CELDAS",
+    "Cell 14 Famma": "CELDAS",
+    "Cell 15A Famma": "CELDAS",
+    "Cell 15B Famma": "CELDAS",
+    "Cell 16 Famma": "CELDAS",
+    "Cell 17 Famma": "CELDAS",
+    "Cell 3 Famma": "CELDAS",
+    "PRP 1": "PRP",
+    "PRP 2": "PRP",
+    "PRP 3": "PRP"
 }
 
-GRUPOS_ESTAMPADO = ['PRENSAS', 'BALANCIN', 'HIDRAULICAS', 'MECANICAS']
-GRUPOS_SOLDADURA = ['SOLDADURA PUNTO', 'DOBLADORAS', 'CELDAS ROBOTICAS']
+GRUPOS_ESTAMPADO = ['LINEA 1.5', 'LINEA 2', 'LINEA 3', 'LINEA 4']
+GRUPOS_SOLDADURA = ['CELDAS', 'PRP']
 
 # ==========================================
 # 1. FUNCIONES AUXILIARES Y PDF
@@ -88,21 +93,21 @@ def save_chart(fig, w=600, h=300):
         fig.write_image(tmp.name, engine="kaleido", scale=2.5); return tmp.name
 
 # ==========================================
-# 2. CARGA DE DATOS (MOTOR EXACTO PARA M_01 Y M_03)
+# 2. CARGA DE DATOS (MOTOR EXACTO)
 # ==========================================
 @st.cache_data(ttl=300)
 def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
     try:
-        # CONEXIÓN A BASE DE DATOS DE FAMMA (wii_bi en secrets.toml)
         conn = st.connection("wii_bi", type="sql")
         
         ini_str = fecha_ini.strftime('%Y-%m-%d 00:00:00')
         fin_str = fecha_fin.strftime('%Y-%m-%d 23:59:59')
         
         q_metrics = f"SELECT c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas, SUM(COALESCE(p.ProductiveTime, 0)) as T_Operativo, SUM(COALESCE(p.DownTime, 0)) as T_Parada, SUM(COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado, SUM(COALESCE(p.Performance, 0) * COALESCE(p.ProductiveTime, 0)) as Perf_Num, SUM(COALESCE(p.Availability, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as Disp_Num, SUM(COALESCE(p.Quality, 0) * (COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0))) as Cal_Num, SUM(COALESCE(p.Oee, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as OEE_Num FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name"
+        
         q_event = f"SELECT c.Name as Máquina, e.Interval as [Tiempo (Min)], t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4] FROM EVENT_01 e LEFT JOIN CELL c ON e.CellId = c.CellId LEFT JOIN EVENTTYPE t1 ON e.EventTypeLevel1 = t1.EventTypeId LEFT JOIN EVENTTYPE t2 ON e.EventTypeLevel2 = t2.EventTypeId LEFT JOIN EVENTTYPE t3 ON e.EventTypeLevel3 = t3.EventTypeId LEFT JOIN EVENTTYPE t4 ON e.EventTypeLevel4 = t4.EventTypeId WHERE e.Date BETWEEN '{ini_str}' AND '{fin_str}'"
         
-        # LEFT JOIN ACTIVO: Atrapa piezas sin código y las etiqueta como 'S/C'
+        # LEFT JOIN ACTIVO: Atrapa piezas sin código
         q_piezas = f"SELECT c.Name as Máquina, COALESCE(pr.Code, 'S/C') as Pieza, SUM(COALESCE(p.Scrap, 0)) as Scrap, SUM(COALESCE(p.Rework, 0)) as RT FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId LEFT JOIN PRODUCT pr ON p.ProductId = pr.ProductId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name, pr.Code"
 
         q_trend_oee_monthly = f"SELECT p.Month, c.Name as Máquina, SUM(COALESCE(p.ProductiveTime, 0)) as T_Operativo, SUM(COALESCE(p.DownTime, 0)) as T_Parada, SUM(COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado, SUM(COALESCE(p.Performance, 0) * COALESCE(p.ProductiveTime, 0)) as Perf_Num, SUM(COALESCE(p.Availability, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as Disp_Num, SUM(COALESCE(p.Quality, 0) * (COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0))) as Cal_Num, SUM(COALESCE(p.Oee, 0) * (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0))) as OEE_Num FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month <= {mes} GROUP BY p.Month, c.Name"
@@ -239,7 +244,6 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             c_min = data["min"]
             c_max = data["max"]
             
-            # Lógica de semáforo
             if v < c_min:
                 bg_col = (231, 76, 60) # Rojo
                 txt_col = 255
