@@ -9,7 +9,7 @@ from fpdf import FPDF
 from datetime import timedelta
 
 # ==========================================
-# 0. DICCIONARIO DE MÁQUINAS Y GRUPOS FUMISCOR
+# 0. DICCIONARIO DE MÁQUINAS Y GRUPOS
 # ==========================================
 MAQUINAS_MAP = {
     # === ESTAMPADO ===
@@ -52,7 +52,7 @@ GRUPOS_SOLDADURA = ['PRP', 'DOBLADORA', 'CELDA SOLDADURA', 'CELDA SOLDADURA RENA
 # ==========================================
 # 1. CONFIGURACIÓN Y ESTILOS
 # ==========================================
-st.set_page_config(page_title="Generador de Reportes PDF - Fumiscor", layout="wide", page_icon="📄")
+st.set_page_config(page_title="Generador de Reportes PDF", layout="wide", page_icon="📄")
 
 st.markdown("""
 <style>
@@ -64,7 +64,7 @@ st.markdown("""
 
 col_title, col_btn = st.columns([4, 1])
 with col_title:
-    st.markdown('<div class="header-style">📄 Reportes PDF - Fumiscor</div>', unsafe_allow_html=True)
+    st.markdown('<div class="header-style">📄 Reportes Gerenciales PDF</div>', unsafe_allow_html=True)
     st.write("Seleccione los parámetros para generar y descargar los reportes consolidados directamente de la base de datos.")
 with col_btn:
     if st.button("Limpiar Caché", use_container_width=True):
@@ -106,7 +106,6 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
                 GROUP BY c.Name
             """
 
-            # Se retira c.Name de aquí para no generar error, las máquinas se cruzan por Python
             q_op = f"""
                 SELECT DISTINCT op.Name as Operador, p.Factory as Fábrica, 
                        (SUM(p.Performance * p.ProductiveTime) OVER(PARTITION BY p.OperatorId) / NULLIF(SUM(p.ProductiveTime) OVER(PARTITION BY p.OperatorId), 0)) as PERFORMANCE
@@ -152,7 +151,6 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
                 GROUP BY c.Name
             """
             
-            # Se retira CELL c de aquí, cruzaremos por eventos en Python
             q_op = f"""
                 SELECT op.Name as Operador, p.Factory as Fábrica,
                        p.Performance, p.ProductiveTime
@@ -179,18 +177,18 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
         df_prod_target = conn.query(q_prod)
         df_metrics = conn.query(q_metrics)
 
-        # Se quita el JOIN con FACTORY para evitar errores de columnas y silencios.
         q_event = f"""
             SELECT e.Id as Evento_Id, c.Name as Máquina, e.Started as Inicio, e.Finish as Fin, 
                    e.Interval as [Tiempo (Min)], t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], 
                    t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4], op.Name as Operador, 
-                   e.Date as Fecha_Filtro, tu.Name as Turno
+                   e.Date as Fecha_Filtro, f.Name as Fábrica, tu.Name as Turno
             FROM EVENT_01 e
             LEFT JOIN CELL c ON e.CellId = c.CellId
             LEFT JOIN EVENTTYPE t1 ON e.EventTypeLevel1 = t1.EventTypeId
             LEFT JOIN EVENTTYPE t2 ON e.EventTypeLevel2 = t2.EventTypeId
             LEFT JOIN EVENTTYPE t3 ON e.EventTypeLevel3 = t3.EventTypeId
             LEFT JOIN EVENTTYPE t4 ON e.EventTypeLevel4 = t4.EventTypeId
+            LEFT JOIN FACTORY f ON e.FactoryId = f.FactoryId
             LEFT JOIN TURN tu ON e.TurnId = tu.TurnId
             LEFT JOIN EVENT_OPERATOR_01 eo ON e.Id = eo.EventId
             LEFT JOIN OPERATOR op ON eo.OperatorId = op.OperatorId
@@ -494,7 +492,7 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
 
 
 # ==========================================
-# 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL
+# 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL (REPORTE GERENCIAL)
 # ==========================================
 def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_tipo, df_trend, df_metrics_pdf):
     if area.upper() == "ESTAMPADO":
@@ -515,13 +513,10 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         df_metrics_pdf['PERFORMANCE'] = df_metrics_pdf['PERFORMANCE'] / 100.0
         df_metrics_pdf['CALIDAD'] = df_metrics_pdf['CALIDAD'] / 100.0
 
-    # Extraemos todos los eventos (sin filtrar por fábrica para evitar nulos desde SQL)
-    df_pdf = pd.DataFrame()
+    df_pdf = pd.DataFrame(columns=['Máquina', 'Fábrica', 'Estado_Global', 'Tiempo (Min)', 'Operador'])
     if not df_pdf_raw.empty:
-        df_pdf = df_pdf_raw.copy()
-        df_pdf['Grupo_Máquina'] = df_pdf['Máquina'].astype(str).str.strip().str.upper().map(mapa_limpio).fillna('Otro')
-        # Filtramos por los grupos que pertenecen a Estampado o Soldadura
-        df_pdf = df_pdf[df_pdf['Grupo_Máquina'].isin(grupos_area)]
+        df_pdf = df_pdf_raw[df_pdf_raw['Fábrica'].astype(str).str.contains(area, case=False, na=False)].copy()
+    df_pdf['Grupo_Máquina'] = df_pdf['Máquina'].astype(str).str.strip().str.upper().map(mapa_limpio).fillna('Otro')
 
     df_prod_pdf = pd.DataFrame(columns=['Máquina', 'Buenas', 'Retrabajo', 'Observadas'])
     if not prod_target_df.empty:
@@ -616,21 +611,19 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         for maq in maq_del_grupo:
             metrics = obtener_metricas_maquina(maq)
             if metrics:
-                # Solo sumamos a los promedios si tiene los 3 valores (Planificado, Operativo y Piezas Totales)
-                if metrics['T_Planificado'] > 0 and metrics['T_Operativo'] > 0 and metrics['Totales'] > 0:
-                    maquinas_metricas[maq] = metrics
-                    t_p = metrics['T_Planificado']; t_o = metrics['T_Operativo']
-                    g_plan += t_p; g_op += t_o
-                    g_buenas += metrics['Buenas']; g_totales += metrics['Totales']
-                    
-                    g_disp_w += metrics['DISPONIBILIDAD'] * t_p
-                    g_perf_w += metrics['PERFORMANCE'] * t_o
-                    g_oee_w += metrics['OEE'] * t_p
+                maquinas_metricas[maq] = metrics
+                t_p = metrics['T_Planificado']; t_o = metrics['T_Operativo']
+                g_plan += t_p; g_op += t_o
+                g_buenas += metrics['Buenas']; g_totales += metrics['Totales']
+                
+                g_disp_w += metrics['DISPONIBILIDAD'] * t_p
+                g_perf_w += metrics['PERFORMANCE'] * t_o
+                g_oee_w += metrics['OEE'] * t_p
                 
         g_disp = g_disp_w / g_plan if g_plan > 0 else 0
         g_perf = g_perf_w / g_op if g_op > 0 else 0
         g_cal = g_buenas / g_totales if g_totales > 0 else 0
-        g_oee = g_oee_w / g_plan if g_plan > 0 else 0 # <- Cálculo Ponderado Matemático Exacto
+        g_oee = g_disp * g_perf * g_cal
         
         m_g = {'OEE': g_oee, 'DISPONIBILIDAD': g_disp, 'PERFORMANCE': g_perf, 'CALIDAD': g_cal}
         print_pdf_metric_row(pdf, f"Total {g}", m_g)
@@ -1013,61 +1006,72 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     print_section_title(pdf, "Performance de Operarios General", theme_color)
     
     if not op_target_df.empty:
-        # En vez de fallar por Fábrica, filtramos con el MAQUINAS_MAP
-        ops_activos = []
-        if not df_pdf.empty:
-            for op_list in df_pdf['Operador'].unique():
-                if pd.notna(op_list) and op_list != '-': ops_activos.extend([o.strip() for o in op_list.split('/')])
-        
-        if ops_activos:
-            df_filt = op_target_df[op_target_df['Operador'].isin(ops_activos)].copy()
+        # Filtramos Operarios de la Fábrica actual
+        if 'Fábrica' in op_target_df.columns:
+            df_filt = op_target_df[op_target_df['Fábrica'].astype(str).str.contains(area, case=False, na=False)].copy()
         else:
-            # Plan B: Si no hay eventos, intenta filtrar por la columna Fabrica si existe
-            if 'Fábrica' in op_target_df.columns:
-                df_filt = op_target_df[op_target_df['Fábrica'].astype(str).str.contains(area, case=False, na=False)].copy()
-            else:
-                df_filt = op_target_df.copy()
+            # Plan B si no hay columna Fabrica (En caso de reportes antiguos)
+            ops_activos = []
+            if not df_pdf_raw.empty:
+                for op_list in df_pdf_raw['Operador'].unique():
+                    if pd.notna(op_list) and op_list != '-': 
+                        ops_activos.extend([clean_text(o).strip().upper() for o in str(op_list).split('/')])
+            df_filt = op_target_df.copy()
+            df_filt['Op_Upper'] = df_filt['Operador'].apply(lambda x: clean_text(str(x)).strip().upper())
+            df_filt = df_filt[df_filt['Op_Upper'].isin(ops_activos)]
             
         if not df_filt.empty:
             df_filt = df_filt.drop_duplicates(subset=['Operador']).copy()
             df_filt['PERFORMANCE'] = pd.to_numeric(df_filt['PERFORMANCE'], errors='coerce').fillna(0)
             df_filt = df_filt.sort_values('PERFORMANCE', ascending=False)
             
-            # MAQUINAS OPERADAS POR OPERADOR DESDE EVENTOS
+            # --- MOTOR DE EMPAREJAMIENTO DE MÁQUINAS BLINDADO ---
             operador_maquinas = {}
-            if not df_pdf.empty:
-                for _, r in df_pdf.iterrows():
-                    maq = str(r['Máquina']).strip()
-                    ops = str(r['Operador']).split('/')
-                    for o in ops:
-                        o = o.strip()
-                        if o and o != '-':
-                            if o not in operador_maquinas:
-                                operador_maquinas[o] = set()
-                            operador_maquinas[o].add(maq)
+            if not df_pdf_raw.empty:
+                for _, r in df_pdf_raw.iterrows():
+                    maq = str(r.get('Máquina', '')).strip()
+                    if not maq or maq.lower() in ['nan', 'none']: continue
+                    
+                    ops_str = str(r.get('Operador', ''))
+                    if pd.notna(ops_str) and ops_str != '-':
+                        for o in ops_str.split('/'):
+                            # Convertimos TODO a mayúsculas y quitamos espacios para el match
+                            o_clean = clean_text(o).strip().upper()
+                            if o_clean:
+                                if o_clean not in operador_maquinas:
+                                    operador_maquinas[o_clean] = set()
+                                operador_maquinas[o_clean].add(maq)
 
             def dibujar_cabeza_oper():
                 setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 9)
                 pdf.cell(50, 6, "Operador", 1, 0, 'C', True)
-                pdf.cell(35, 6, "Fabrica", 1, 0, 'C', True)
-                pdf.cell(85, 6, "Maquinas Operadas", 1, 0, 'C', True)
+                pdf.cell(30, 6, "Fabrica", 1, 0, 'C', True)
+                pdf.cell(90, 6, "Maquinas Operadas", 1, 0, 'C', True)
                 pdf.cell(20, 6, "Perf.", 1, 1, 'C', True)
 
             dibujar_cabeza_oper()
             setup_table_row(pdf); pdf.set_font("Arial", '', 9)
+            
             for _, row in df_filt.iterrows():
                 if pdf.get_y() > 270: 
                     pdf.add_page(); dibujar_cabeza_oper(); setup_table_row(pdf); pdf.set_font("Arial", '', 9)
+                
                 perf_val = int(round(row['PERFORMANCE']))
                 
-                op_name = clean_text(str(row['Operador'])).strip()
-                maq_set = operador_maquinas.get(op_name, set())
+                # Preparamos el nombre del operador para el match (MAYUSCULAS y STRIP)
+                op_name_raw = str(row['Operador'])
+                op_name = clean_text(op_name_raw).strip()
+                op_name_upper = op_name.upper()
+                
+                # Buscamos en el diccionario de eventos
+                maq_set = operador_maquinas.get(op_name_upper, set())
                 maq_str = ", ".join(sorted(list(maq_set))) if maq_set else "-"
                 
+                # Dibujamos fila
                 pdf.cell(50, 5, " " + op_name[:28], 'B')
                 fabrica_str = str(row.get('Fábrica', '-'))
-                pdf.cell(35, 5, " " + clean_text(fabrica_str[:18]), 'B')
-                pdf.cell(85, 5, " " + clean_text(maq_str[:50]), 'B')
+                pdf.cell(30, 5, " " + clean_text(fabrica_str[:15]), 'B')
+                pdf.cell(90, 5, " " + clean_text(maq_str[:55]), 'B')
                     
                 if perf_val >= 90: pdf.set_text_color(33, 195, 84)
                 elif perf_val >= 80: pdf.set_text_color(200, 150, 0)
