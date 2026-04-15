@@ -88,7 +88,6 @@ def save_chart(fig, w=600, h=300):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
         fig.write_image(tmp.name, engine="kaleido", scale=2.5); return tmp.name
 
-
 # ==========================================
 # 2. CARGA DE DATOS (NÚCLEO FAMMA)
 # ==========================================
@@ -164,7 +163,6 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         else:
             df_raw['Tiempo (Min)'] = pd.to_numeric(df_raw['Tiempo (Min)'], errors='coerce').fillna(0)
             
-            # Limpiamos duplicados generados por los operadores logueados al mismo tiempo
             df_raw['Operador_Celda'] = df_raw['Operador_Celda'].fillna('').astype(str)
             df_raw['Operador_Req'] = df_raw['Operador_Req'].fillna('').astype(str)
             df_raw['Operador_Resp'] = df_raw['Operador_Resp'].fillna('').astype(str)
@@ -181,7 +179,6 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
                 'Operador_Resp': agrupar_nombres
             }).reset_index()
 
-            # --- Lógica de Negocio: 9 Niveles Inteligentes ---
             cols_niveles = [c for c in df_raw.columns if 'Nivel Evento' in c]
 
             def categorizar_estado(row):
@@ -221,7 +218,6 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
             df_raw['Categoria_Macro'] = df_raw.apply(clasificar_macro, axis=1)
             df_raw['Detalle_Final'] = df_raw.apply(obtener_detalle_final, axis=1)
 
-            # Filtramos proyectos tal como venía en la estructura original del Dashboard Fumi
             df_raw = df_raw[df_raw['Estado_Global'] != 'Proyecto'].copy()
 
         return df_metrics, df_raw, df_trend, df_piezas
@@ -230,7 +226,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # ==========================================
-# 3. MOTOR: GESTIÓN A LA VISTA (DISPONIBILIDAD)
+# 3. MOTOR: GESTIÓN A LA VISTA (DISPONIBILIDAD POR ÁREA/LÍNEA)
 # ==========================================
 def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw, df_trend):
     theme_color = (15, 76, 129) if area.upper() == "ESTAMPADO" else (211, 84, 0); theme_hex = '#%02x%02x%02x' % theme_color
@@ -247,7 +243,6 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             
     df_m = df_m[df_m['Grupo'].isin(grupos_area)]; df_t = df_t[df_t['Grupo'].isin(grupos_area)]; df_r = df_r[df_r['Grupo'].isin(grupos_area)]
     
-    # Creamos la lista de páginas asegurando que se imprima la General y luego cada Línea 1, 2, 3, etc.
     paginas = ['GENERAL'] + [g for g in grupos_area if g in df_m['Grupo'].unique()]
 
     for target in paginas:
@@ -255,7 +250,6 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
         
         if target == 'GENERAL':
             if area.upper() == 'SOLDADURA':
-                # Regla de exclusión antigua de Fumi por si aplica a alguna celda específica
                 df_m_target = df_m[df_m['Grupo'] != 'CELDAS RENAULT']
                 df_t_target = df_t[df_t['Grupo'] != 'CELDAS RENAULT']
                 df_r_target = df_r[df_r['Grupo'] != 'CELDAS RENAULT']
@@ -297,29 +291,20 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
         }
         
         for i, (lbl, data) in enumerate(kpis.items()):
-            v = data["val"]
-            c_min = data["min"]
-            c_max = data["max"]
+            v = data["val"]; c_min = data["min"]; c_max = data["max"]
             
-            if v < c_min:
-                bg_col = (231, 76, 60)
-                txt_col = 255
-            elif v < c_max:
-                bg_col = (241, 196, 15)
-                txt_col = 0 
-            else:
-                bg_col = (46, 204, 113)
-                txt_col = 255
+            if v < c_min: bg_col = (231, 76, 60); txt_col = 255
+            elif v < c_max: bg_col = (241, 196, 15); txt_col = 0 
+            else: bg_col = (46, 204, 113); txt_col = 255
 
             x = 10 + (i * 68.5)
             pdf.draw_kpi_panel(x, y_kpi:=25, 65, 20, bg_color=bg_col)
-            pdf.set_xy(x, y_kpi + 2); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(txt_col); pdf.cell(65, 6, lbl, 0, 1, 'L')
+            pdf.set_xy(x, y_kpi + 2); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(txt_col); pdf.cell(65, 6, lbl, 0, 1, 'C')
             pdf.set_xy(x, y_kpi + 8); pdf.set_font("Arial", 'B', 20); pdf.cell(65, 10, f"{v*100:.1f}%", 0, 0, 'C')
         pdf.set_text_color(0)
 
         def add_trend_bar(df_in, col, title, x_pos, y_pos, min_t, max_t):
             if df_in.empty: return
-            
             cols_req = ['OEE_Num', 'T_Planificado', 'Perf_Num', 'T_Operativo', 'Disp_Num', 'Cal_Num', 'Totales']
             for c in cols_req:
                 if c in df_in.columns: df_in[c] = pd.to_numeric(df_in[c], errors='coerce').fillna(0)
@@ -346,21 +331,14 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             
             if df_g['Val'].max() > 1.5: df_g['Val'] /= 100.0
 
-            # YTD ACUMULADO
             ytd_v = 0
-            if col == 'OEE':
-                ytd_v = df_valid['OEE_Num'].sum() / df_valid['T_Planificado'].sum() if df_valid['T_Planificado'].sum() > 0 else 0
-            elif col == 'PERFORMANCE':
-                ytd_v = df_valid['Perf_Num'].sum() / df_valid['T_Operativo'].sum() if df_valid['T_Operativo'].sum() > 0 else 0
-            elif col == 'DISPONIBILIDAD':
-                ytd_v = df_valid['Disp_Num'].sum() / df_valid['T_Planificado'].sum() if df_valid['T_Planificado'].sum() > 0 else 0
-            elif col == 'CALIDAD':
-                ytd_v = df_valid['Cal_Num'].sum() / df_valid['Totales'].sum() if df_valid['Totales'].sum() > 0 else 0
-            
+            if col == 'OEE': ytd_v = df_valid['OEE_Num'].sum() / df_valid['T_Planificado'].sum() if df_valid['T_Planificado'].sum() > 0 else 0
+            elif col == 'PERFORMANCE': ytd_v = df_valid['Perf_Num'].sum() / df_valid['T_Operativo'].sum() if df_valid['T_Operativo'].sum() > 0 else 0
+            elif col == 'DISPONIBILIDAD': ytd_v = df_valid['Disp_Num'].sum() / df_valid['T_Planificado'].sum() if df_valid['T_Planificado'].sum() > 0 else 0
+            elif col == 'CALIDAD': ytd_v = df_valid['Cal_Num'].sum() / df_valid['Totales'].sum() if df_valid['Totales'].sum() > 0 else 0
             if ytd_v > 1.5: ytd_v /= 100.0
 
             def get_c(v): return '#E74C3C' if v < min_t else ('#F1C40F' if v < max_t else '#2ECC71')
-            
             df_g['Mes_Str'] = df_g['Month'].map({1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'})
             df_g['Color'] = df_g['Val'].apply(get_c)
             
@@ -373,9 +351,7 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             fig = go.Figure(data=[go.Bar(x=df_g['Mes_Str'], y=df_g['Val'], marker=dict(color=df_g['Color'], line=dict(color='rgba(0,0,0,0.8)', width=2)), text=df_g['Val'], texttemplate='<b>%{text:.1%}</b>', textposition='outside', opacity=0.85)])
             fig.add_hline(y=min_t, line_dash="dash", line_color="#E74C3C", annotation_text=f"<b>{min_t*100:.0f}%</b>", annotation_font_color='black')
             fig.add_hline(y=max_t, line_dash="dash", line_color="#2ECC71", annotation_text=f"<b>{max_t*100:.0f}%</b>", annotation_font_color='black')
-            
-            if len(df_g) > 1:
-                fig.add_vline(x=len(df_g) - 1.5, line_width=2, line_dash="dash", line_color="rgba(0,0,0,0.4)")
+            if len(df_g) > 1: fig.add_vline(x=len(df_g) - 1.5, line_width=2, line_dash="dash", line_color="rgba(0,0,0,0.4)")
             
             fig.update_layout(title=dict(text=f"<b>{title}</b>", font=dict(family="Times", size=13, color="black")), margin=dict(t=30, b=20, l=10, r=10), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', yaxis=dict(range=[0, upper_limit], visible=False), xaxis_title="")
             fig.update_traces(textfont=dict(color='black', size=11, family="Arial"), cliponaxis=False)
@@ -516,7 +492,135 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
-# 5. INTERFAZ STREAMLIT
+# 5. MOTOR: OEE GENERAL DE PLANTA (GLOBAL)
+# ==========================================
+def crear_pdf_oee_general(label_reporte, df_metrics, df_trend):
+    theme_color = (44, 62, 80) # Color corporativo oscuro para toda la planta
+    pdf = ReportePDF("GLOBAL PLANTA FAMMA", label_reporte, theme_color)
+    pdf.add_page(orientation='L'); pdf.set_auto_page_break(False); pdf.add_gradient_background()
+
+    # --- ENCABEZADO ---
+    pdf.set_y(10); pdf.set_fill_color(*theme_color); pdf.set_text_color(255); pdf.set_font("Arial", 'B', 10)
+    pdf.cell(40, 6, "PERIODO", 1, 0, 'C', fill=True); pdf.cell(197, 6, f"PLANTA FAMMA - GENERAL", 1, 0, 'C', fill=True); pdf.cell(40, 6, "INFORME", 1, 1, 'C', fill=True)
+    pdf.set_fill_color(255, 255, 255); pdf.set_font("Arial", '', 10); pdf.set_text_color(0)
+    pdf.cell(40, 6, label_reporte, 1, 0, 'C', fill=True); pdf.set_font("Arial", 'B', 10); pdf.cell(197, 6, "EMPRESA: FAMMA", 1, 0, 'C', fill=True); pdf.set_font("Arial", '', 10); pdf.cell(40, 6, "DISPONIBILIDAD GLOBAL", 1, 1, 'C', fill=True)
+
+    # --- CÁLCULO DE KPIS GLOBALES DEL MES ---
+    df_m = df_metrics.copy()
+    if not df_m.empty:
+        df_m['Totales'] = df_m['Buenas'] + df_m['Retrabajo'] + df_m['Observadas']
+        valid_m = df_m[(df_m['T_Planificado'] > 0) & (df_m['T_Operativo'] > 0) & (df_m['Totales'] > 0)]
+    else:
+        valid_m = pd.DataFrame()
+
+    t_plan = valid_m['T_Planificado'].sum() if not valid_m.empty else 0
+    t_op = valid_m['T_Operativo'].sum() if not valid_m.empty else 0
+    t_piezas = valid_m['Totales'].sum() if not valid_m.empty else 0
+
+    v_oee = (valid_m['OEE_Num'].sum() / t_plan) if t_plan > 0 else 0
+    v_perf = (valid_m['Perf_Num'].sum() / t_op) if t_op > 0 else 0
+    v_disp = (valid_m['Disp_Num'].sum() / t_plan) if t_plan > 0 else 0
+    v_cal = (valid_m['Cal_Num'].sum() / t_piezas) if t_piezas > 0 else 0
+
+    if v_oee > 1.5 or v_perf > 1.5 or v_disp > 1.5:
+        v_oee /= 100.0; v_perf /= 100.0; v_disp /= 100.0; v_cal /= 100.0
+
+    kpis = {
+        "OEE": {"val": v_oee, "min": 0.75, "max": 0.85},
+        "PERFORMANCE": {"val": v_perf, "min": 0.80, "max": 0.90},
+        "DISPONIBILIDAD": {"val": v_disp, "min": 0.75, "max": 0.85},
+        "CALIDAD": {"val": v_cal, "min": 0.75, "max": 0.85}
+    }
+
+    # --- DIBUJO DE LOS 4 RECUADROS SUPERIORES ---
+    for i, (lbl, data) in enumerate(kpis.items()):
+        v = data["val"]; c_min = data["min"]; c_max = data["max"]
+        if v < c_min: bg_col = (231, 76, 60); txt_col = 255
+        elif v < c_max: bg_col = (241, 196, 15); txt_col = 0
+        else: bg_col = (46, 204, 113); txt_col = 255
+
+        x = 10 + (i * 68.5)
+        pdf.draw_kpi_panel(x, y_kpi:=25, 65, 20, bg_color=bg_col)
+        pdf.set_xy(x, y_kpi + 2); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(txt_col); pdf.cell(65, 6, lbl, 0, 1, 'C')
+        pdf.set_xy(x, y_kpi + 8); pdf.set_font("Arial", 'B', 20); pdf.cell(65, 10, f"{v*100:.1f}%", 0, 0, 'C')
+
+    pdf.set_text_color(0)
+
+    # --- GRÁFICOS DE EVOLUCIÓN (CUADRÍCULA 2x2) ---
+    def add_global_trend_bar(df_in, col, title, x_pos, y_pos, min_t, max_t, w_panel, h_panel):
+        if df_in.empty: return
+        cols_req = ['OEE_Num', 'T_Planificado', 'Perf_Num', 'T_Operativo', 'Disp_Num', 'Cal_Num', 'Totales']
+        for c in cols_req:
+            if c in df_in.columns: df_in[c] = pd.to_numeric(df_in[c], errors='coerce').fillna(0)
+
+        if 'Totales' in df_in.columns:
+            df_valid = df_in[(df_in['T_Planificado'] > 0) & (df_in['T_Operativo'] > 0) & (df_in['Totales'] > 0)]
+        else:
+            df_valid = df_in[(df_in['T_Planificado'] > 0) & (df_in['T_Operativo'] > 0)]
+
+        if df_valid.empty: return
+
+        # Agrupamos los datos sumando toda la planta
+        df_g = df_valid.groupby('Month')[cols_req].sum().reset_index()
+        if 'Month' in df_g.columns: df_g['Month'] = df_g['Month'].astype(int)
+
+        if col == 'OEE' and 'OEE_Num' in df_g.columns:
+            df_g['Val'] = df_g.apply(lambda r: r['OEE_Num'] / r['T_Planificado'] if r.get('T_Planificado', 0) > 0 else 0, axis=1)
+        elif col == 'PERFORMANCE' and 'Perf_Num' in df_g.columns:
+            df_g['Val'] = df_g.apply(lambda r: r['Perf_Num'] / r['T_Operativo'] if r.get('T_Operativo', 0) > 0 else 0, axis=1)
+        elif col == 'DISPONIBILIDAD' and 'Disp_Num' in df_g.columns:
+            df_g['Val'] = df_g.apply(lambda r: r['Disp_Num'] / r['T_Planificado'] if r.get('T_Planificado', 0) > 0 else 0, axis=1)
+        elif col == 'CALIDAD' and 'Cal_Num' in df_g.columns:
+            df_g['Val'] = df_g.apply(lambda r: r['Cal_Num'] / r['Totales'] if r.get('Totales', 0) > 0 else 0, axis=1)
+        else: return
+
+        if df_g['Val'].max() > 1.5: df_g['Val'] /= 100.0
+
+        # --- ACUMULADO YTD ---
+        ytd_v = 0
+        if col == 'OEE': ytd_v = df_valid['OEE_Num'].sum() / df_valid['T_Planificado'].sum() if df_valid['T_Planificado'].sum() > 0 else 0
+        elif col == 'PERFORMANCE': ytd_v = df_valid['Perf_Num'].sum() / df_valid['T_Operativo'].sum() if df_valid['T_Operativo'].sum() > 0 else 0
+        elif col == 'DISPONIBILIDAD': ytd_v = df_valid['Disp_Num'].sum() / df_valid['T_Planificado'].sum() if df_valid['T_Planificado'].sum() > 0 else 0
+        elif col == 'CALIDAD': ytd_v = df_valid['Cal_Num'].sum() / df_valid['Totales'].sum() if df_valid['Totales'].sum() > 0 else 0
+        if ytd_v > 1.5: ytd_v /= 100.0
+
+        def get_c(v): return '#E74C3C' if v < min_t else ('#F1C40F' if v < max_t else '#2ECC71')
+        df_g['Mes_Str'] = df_g['Month'].map({1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'})
+        df_g['Color'] = df_g['Val'].apply(get_c)
+
+        ytd_row = pd.DataFrame([{'Month': 99, 'Mes_Str': 'Acum.', 'Val': ytd_v, 'Color': get_c(ytd_v)}])
+        df_g = pd.concat([df_g, ytd_row], ignore_index=True)
+
+        max_y = df_g['Val'].max() if not df_g.empty else 1
+        upper_limit = max(1.1, max_y * 1.3) if not pd.isna(max_y) else 1.1
+
+        fig = go.Figure(data=[go.Bar(x=df_g['Mes_Str'], y=df_g['Val'], marker=dict(color=df_g['Color'], line=dict(color='rgba(0,0,0,0.8)', width=2)), text=df_g['Val'], texttemplate='<b>%{text:.1%}</b>', textposition='outside', opacity=0.85)])
+        fig.add_hline(y=min_t, line_dash="dash", line_color="#E74C3C", annotation_text=f"<b>{min_t*100:.0f}%</b>", annotation_font_color='black')
+        fig.add_hline(y=max_t, line_dash="dash", line_color="#2ECC71", annotation_text=f"<b>{max_t*100:.0f}%</b>", annotation_font_color='black')
+        if len(df_g) > 1: fig.add_vline(x=len(df_g) - 1.5, line_width=2, line_dash="dash", line_color="rgba(0,0,0,0.4)")
+
+        fig.update_layout(title=dict(text=f"<b>{title}</b>", font=dict(family="Times", size=13, color="black")), margin=dict(t=30, b=20, l=10, r=10), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', yaxis=dict(range=[0, upper_limit], visible=False), xaxis_title="")
+        fig.update_traces(textfont=dict(color='black', size=11, family="Arial"), cliponaxis=False)
+
+        img = save_chart(fig, 600, 320)
+        pdf.image(img, x=x_pos+2, y=y_pos+2, w=w_panel-4, h=h_panel-4)
+        os.remove(img)
+
+    # --- DIBUJO DE LA CUADRÍCULA 2x2 ---
+    # Fila 1
+    pdf.draw_panel(10, 50, 136, 72); pdf.draw_panel(149, 50, 138, 72)
+    add_global_trend_bar(df_trend, 'OEE', 'OEE (%) - GLOBAL PLANTA', 10, 50, 0.75, 0.85, 136, 72)
+    add_global_trend_bar(df_trend, 'PERFORMANCE', 'PERFORMANCE (%) - GLOBAL PLANTA', 149, 50, 0.80, 0.90, 138, 72)
+
+    # Fila 2
+    pdf.draw_panel(10, 126, 136, 72); pdf.draw_panel(149, 126, 138, 72)
+    add_global_trend_bar(df_trend, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%) - GLOBAL PLANTA', 10, 126, 0.75, 0.85, 136, 72)
+    add_global_trend_bar(df_trend, 'CALIDAD', 'CALIDAD (%) - GLOBAL PLANTA', 149, 126, 0.75, 0.85, 138, 72)
+
+    return pdf.output(dest='S').encode('latin-1')
+
+# ==========================================
+# 6. INTERFAZ STREAMLIT
 # ==========================================
 st.title("📄 Reportes FAMMA")
 st.divider()
@@ -540,7 +644,14 @@ hs_rt = st.number_input("Horas de RT:", min_value=0.0, max_value=1000.0, value=0
 
 st.divider()
 st.write("### 3. Descargar Reportes")
-c_d, c_p = st.columns(2)
+c_g, c_d, c_p = st.columns(3)
+
+# Nueva Columna: Reporte Global
+with c_g:
+    st.markdown("#### 🌍 OEE General de Planta")
+    if st.button("Generar OEE Global FAMMA", use_container_width=True):
+        with st.spinner("Generando..."):
+            st.download_button("📥 Bajar PDF General", crear_pdf_oee_general(lab, df_m, df_t), "OEE_General_Planta.pdf")
 
 with c_d:
     st.markdown("#### ⚙️ Informe de Disponibilidad (OEE)")
