@@ -407,6 +407,14 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
     df_t = df_t[df_t['Grupo'].isin(grupos_upper)]; df_p = df_p[df_p['Grupo'].isin(grupos_upper)]
     paginas = ['GENERAL'] + [g for g in grupos_upper if g in df_t['Grupo'].unique()]
 
+    # Definir valores de objetivo según el área para Scrap y RT
+    if area.upper() == "ESTAMPADO":
+        target_scrap = 0.5
+        target_rt = 2.0
+    else:
+        target_scrap = 0.3
+        target_rt = 2.0
+
     for target in paginas:
         pdf.add_page(orientation='L'); pdf.set_auto_page_break(False); pdf.add_gradient_background()
         
@@ -440,7 +448,16 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         titles = ["PIEZAS PRODUCIDAS MES A MES", "% DE SCRAP MES A MES", "% DE RT MES A MES"]
         for i, f in enumerate([f1, f2, f3]): 
             max_y = df_ev['Totales'].max() if i==0 else (df_ev['% Scrap'].max() if i==1 else df_ev['% RT'].max())
-            upper_limit = max_y * 1.3 if max_y > 0 else 1 if i == 0 else max(0.2, max_y * 1.3)
+            
+            if i == 0: 
+                upper_limit = max_y * 1.3 if max_y > 0 else 1
+            else: 
+                current_target = target_scrap if i == 1 else target_rt
+                # Asegura que el tope del gráfico no sea más bajo que la línea del objetivo
+                upper_limit = max(0.2, max_y * 1.3, current_target * 1.5)
+                # Dibuja la línea de objetivo
+                f.add_hline(y=current_target, line_dash="dash", line_width=2, line_color="#E74C3C", annotation_text=f"<b>Obj: {current_target}%</b>", annotation_font_color='black')
+                
             f.update_yaxes(range=[0, upper_limit])
             f.update_layout(title=dict(text=f"<b>{titles[i]}</b>", font=dict(family="Times", size=13, color="black")), margin=dict(l=10, r=10, t=30, b=20), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis=dict(visible=False))
             f.update_traces(textposition="outside", cliponaxis=False, textfont=dict(color='black', size=11, family="Arial"), marker_line_color='rgba(0,0,0,0.8)', marker_line_width=2, opacity=0.85)
@@ -469,7 +486,8 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
             i4 = save_chart(f4, w=550, h=330); pdf.image(i4, x=151, y=23, w=133, h=h_br-2); os.remove(i4)
             i5 = save_chart(f5, w=550, h=330); pdf.image(i5, x=151, y=109.5, w=133, h=h_br-2); os.remove(i5)
             
-        if target == 'GENERAL':
+        # El recuadro de HS DE RT solo se renderiza si estamos en la hoja "GENERAL" y el área es "ESTAMPADO"
+        if target == 'GENERAL' and area.upper() == 'ESTAMPADO':
             pdf.draw_panel(150, 196, 135, 12, 2, (240,240,240)); pdf.set_xy(150, 196); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0); pdf.cell(67.5, 12, "HS DE RT", 0, 0, 'C')
             pdf.draw_panel(217.5, 196, 67.5, 12, 2, (255,255,255)); pdf.set_xy(217.5, 196); pdf.cell(67.5, 12, f"{hs_rt:.1f}", 0, 1, 'C')
 
@@ -502,7 +520,7 @@ with st.expander("🔍 Previsualizar Datos Crudos Extraídos"):
     st.write("**Eventos extraídos de la BD (Fallas/Paradas):**", df_r.head(10) if not df_r.empty else "Vacío - No hay registros en este mes/año en la tabla EVENT_01")
 
 st.write("### 2. Datos Manuales (Informe Productivo)")
-hs_rt = st.number_input("Horas de RT:", min_value=0.0, max_value=1000.0, value=0.0, step=1.0)
+hs_rt = st.number_input("Horas de RT (Solo válido para Estampado General):", min_value=0.0, max_value=1000.0, value=0.0, step=1.0)
 
 st.divider()
 st.write("### 3. Preparar y Descargar Reportes")
