@@ -134,12 +134,14 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         else:
             df_trend = df_t_pcs if not df_t_pcs.empty else df_t_oee
 
-        # --- 5. EVENTOS: LOGICA AVANZADA DE RECONOCIMIENTO ---
+        # --- 5. EVENTOS: SE AMPLIÓ HASTA EL NIVEL 9 PARA VER LA FALLA EXACTA ---
         q_event = f"""
             SELECT c.Name as Máquina, e.Interval as [Tiempo (Min)], 
                    t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], 
                    t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4],
-                   t5.Name as [Nivel Evento 5], t6.Name as [Nivel Evento 6]
+                   t5.Name as [Nivel Evento 5], t6.Name as [Nivel Evento 6],
+                   t7.Name as [Nivel Evento 7], t8.Name as [Nivel Evento 8],
+                   t9.Name as [Nivel Evento 9]
             FROM EVENT_01 e 
             LEFT JOIN CELL c ON e.CellId = c.CellId 
             LEFT JOIN EVENTTYPE t1 ON e.EventTypeLevel1 = t1.EventTypeId 
@@ -148,6 +150,9 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
             LEFT JOIN EVENTTYPE t4 ON e.EventTypeLevel4 = t4.EventTypeId
             LEFT JOIN EVENTTYPE t5 ON e.EventTypeLevel5 = t5.EventTypeId
             LEFT JOIN EVENTTYPE t6 ON e.EventTypeLevel6 = t6.EventTypeId
+            LEFT JOIN EVENTTYPE t7 ON e.EventTypeLevel7 = t7.EventTypeId
+            LEFT JOIN EVENTTYPE t8 ON e.EventTypeLevel8 = t8.EventTypeId
+            LEFT JOIN EVENTTYPE t9 ON e.EventTypeLevel9 = t9.EventTypeId
             WHERE e.Date BETWEEN '{ini_str}' AND '{fin_str}'
         """
         df_raw = conn.query(q_event)
@@ -166,12 +171,14 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
             df_raw = pd.DataFrame(columns=['Máquina', 'Tiempo (Min)', 'Nivel Evento 1', 'Nivel Evento 2', 'Nivel Evento 3', 'Nivel Evento 4', 'Estado_Global', 'Categoria_Macro', 'Detalle_Final'])
         else:
             df_raw['Tiempo (Min)'] = pd.to_numeric(df_raw['Tiempo (Min)'], errors='coerce').fillna(0)
-            cols_niveles = ['Nivel Evento 1', 'Nivel Evento 2', 'Nivel Evento 3', 'Nivel Evento 4', 'Nivel Evento 5', 'Nivel Evento 6']
+            cols_niveles = [f'Nivel Evento {i}' for i in range(1, 10)]
             for col in cols_niveles:
                 if col in df_raw.columns: df_raw[col] = df_raw[col].fillna('').astype(str)
                 else: df_raw[col] = ''
 
-            # Lógica extraída del modelo para clasificar inteligentemente 
+            mask_proyecto = (df_raw['Nivel Evento 1'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 2'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 3'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 4'].str.upper().str.contains('PROYECTO'))
+            df_raw = df_raw[~mask_proyecto].copy()
+
             def categorizar_estado(row):
                 texto_completo = " ".join([str(row.get(c, '')) for c in cols_niveles]).upper()
                 if 'PRODUCCION' in texto_completo or 'PRODUCCIÓN' in texto_completo: return 'Producción'
@@ -193,6 +200,17 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
                 validos = [n.strip() for n in niveles if n.strip() and n.strip().lower() not in ['none', 'nan', 'null']]
                 
                 if not validos: return "Sin detalle en sistema"
+                
+                ultimo_dato = validos[-1].upper()
+                estado = row.get('Estado_Global', '')
+                categoria = row.get('Categoria_Macro', '')
+                
+                # Se le pega la etiqueta de "[MANTENIMIENTO]" o "[GESTION]" adelante para mayor precisión
+                if estado == 'Falla/Gestión':
+                    if categoria != 'Otra Falla/Gestión' and categoria != 'Sin Área':
+                        return f"[{categoria.upper()}] {ultimo_dato}"
+                    return ultimo_dato
+                
                 return validos[-1].upper()
                 
             df_raw['Estado_Global'] = df_raw.apply(categorizar_estado, axis=1)
@@ -363,14 +381,10 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             df_f = df_r_target[df_r_target['Estado_Global'] == 'Falla/Gestión'] if not df_r_target.empty else pd.DataFrame()
             
             if not df_f.empty and df_f['Tiempo (Min)'].sum() > 0:
-                excluir = ['BAÑO', 'BANO', 'REFRIGERIO', 'DESCANSO']
-                mask_puras = ~df_f['Detalle_Final'].str.upper().apply(lambda x: any(excl in x for excl in excluir))
-                df_f_puras = df_f[mask_puras]
-                
-                top5 = df_f_puras.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
+                top5 = df_f.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
                 
                 pdf.set_xy(10, 162); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(*theme_color); pdf.set_text_color(255)
-                # Redistribuimos columnas para ganar espacio en el detalle de la falla
+                # Damos más espacio al texto (100) y dejamos los porcentajes apretados
                 pdf.cell(100, 5, "FALLO", border=1, fill=True); pdf.cell(18, 5, "MIN", border=1, align='C', fill=True); pdf.cell(18, 5, "%", border=1, align='C', ln=True, fill=True)
                 pdf.set_font("Arial", '', 7.5); pdf.set_text_color(0); pdf.set_fill_color(255, 255, 255)
                 
@@ -380,11 +394,11 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
                     pdf.cell(18, 6, f"{r['Tiempo (Min)']:.0f}", border=1, align='C', fill=True)
                     pdf.cell(18, 6, f"{(r['Tiempo (Min)']/t_total)*100:.1f}%", border=1, align='C', ln=True, fill=True)
                 
-                # Gráfico Barra Horizontal 100% por Categoria_Macro con Leyenda dinámica (sin etiquetas internas superpuestas)
+                # Gráfico Barra Horizontal 100% por Categoria_Macro con Leyenda Dinámica
                 df_macro = df_f.groupby('Categoria_Macro')['Tiempo (Min)'].sum().reset_index()
                 df_macro['%'] = df_macro['Tiempo (Min)'] / t_total
                 df_macro['Y'] = "Pérdidas"
-                # Creamos el texto de la leyenda incorporando el porcentaje
+                # Leyenda con el porcentaje escrito (para que no se pise adentro de la barrita)
                 df_macro['Leyenda'] = df_macro.apply(lambda r: f"{r['Categoria_Macro']} ({r['%']:.1%})", axis=1)
                 
                 fig_stack = px.bar(df_macro, x='%', y='Y', color='Leyenda', orientation='h', color_discrete_sequence=px.colors.qualitative.Safe)
@@ -509,7 +523,6 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
             i4 = save_chart(f4, w=550, h=330); pdf.image(i4, x=151, y=23, w=133, h=h_br-2); os.remove(i4)
             i5 = save_chart(f5, w=550, h=330); pdf.image(i5, x=151, y=109.5, w=133, h=h_br-2); os.remove(i5)
             
-        # El recuadro de HS DE RT solo se renderiza si estamos en la hoja "GENERAL" y el área es "ESTAMPADO"
         if target == 'GENERAL' and area.upper() == 'ESTAMPADO':
             pdf.draw_panel(150, 196, 135, 12, 2, (240,240,240)); pdf.set_xy(150, 196); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0); pdf.cell(67.5, 12, "HS DE RT", 0, 0, 'C')
             pdf.draw_panel(217.5, 196, 67.5, 12, 2, (255,255,255)); pdf.set_xy(217.5, 196); pdf.cell(67.5, 12, f"{hs_rt:.1f}", 0, 1, 'C')
@@ -549,7 +562,6 @@ st.divider()
 st.write("### 3. Preparar y Descargar Reportes")
 c_d, c_p, c_g = st.columns(3)
 
-# Lógica de carga On-Demand usando st.session_state
 with c_d:
     st.markdown("#### ⚙️ Disponibilidad (OEE)")
     if not df_m.empty:
