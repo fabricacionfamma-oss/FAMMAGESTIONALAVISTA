@@ -13,7 +13,7 @@ from datetime import timedelta
 # ==========================================
 st.set_page_config(page_title="Reportes FAMMA", layout="wide", page_icon="📊")
 
-# DICCIONARIO OFICIAL FAMMA (Coincidencia exacta con la Base de Datos)
+# DICCIONARIO OFICIAL FAMMA
 MAQUINAS_MAP = {
     # --- ESTAMPADO ---
     "LINEA 1.2": "LINEA 1.2",
@@ -95,7 +95,7 @@ def save_chart(fig, w=600, h=300):
         fig.write_image(tmp.name, engine="kaleido", scale=2.5); return tmp.name
 
 # ==========================================
-# 2. CARGA DE DATOS Y PARSER DE ÁRBOLES
+# 2. CARGA DE DATOS Y PARSER LECTURA INVERSA
 # ==========================================
 @st.cache_data(ttl=300)
 def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
@@ -171,21 +171,28 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
             df_raw = pd.DataFrame(columns=['Máquina', 'Tiempo (Min)', 'Nivel Evento 1', 'Estado_Global', 'Categoria_Macro', 'Detalle_Final'])
         else:
             df_raw['Tiempo (Min)'] = pd.to_numeric(df_raw['Tiempo (Min)'], errors='coerce').fillna(0)
-            
-            # PARSER DINÁMICO DE ÁRBOLES DE FALLA (Sirve para Estampado y Soldadura por igual)
+            cols_niveles = [f'Nivel Evento {i}' for i in range(1, 10)]
+            for col in cols_niveles:
+                if col in df_raw.columns: df_raw[col] = df_raw[col].fillna('').astype(str)
+                else: df_raw[col] = ''
+
+            mask_proyecto = (df_raw['Nivel Evento 1'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 2'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 3'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 4'].str.upper().str.contains('PROYECTO'))
+            df_raw = df_raw[~mask_proyecto].copy()
+
+            # ---------------------------------------------------------
+            # LÓGICA DE ESCANEO DE DERECHA A IZQUIERDA (LEVEL 9 -> 1)
+            # ---------------------------------------------------------
             def parse_event_tree(row):
-                niveles = []
-                for i in range(1, 10):
-                    val = str(row.get(f'Nivel Evento {i}', '')).strip()
-                    if val and val.lower() not in ['none', 'nan', 'null']:
-                        niveles.append(val.upper())
-                        
-                if not niveles:
+                # Obtener solo los niveles con datos
+                niveles = [str(row.get(c, '')).strip().upper() for c in cols_niveles]
+                validos = [n for n in niveles if n and n not in ['NONE', 'NAN', 'NULL']]
+                
+                if not validos:
                     return 'Falla/Gestión', 'Otra Falla/Gestión', 'Sin detalle en sistema'
                     
-                texto_completo = " > ".join(niveles)
+                texto_completo = " > ".join(validos)
                 
-                # 1. ESTADO GLOBAL
+                # 1. DEFINIR ESTADO GLOBAL
                 estado = 'Falla/Gestión'
                 if 'PROYECTO' in texto_completo: 
                     estado = 'Proyecto'
@@ -193,16 +200,16 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
                     estado = 'Descanso'
                 elif any(x in texto_completo for x in ['PARADA PROGRAMADA', 'SMED']): 
                     estado = 'Parada Programada'
-                elif 'PRODUCCION' in texto_completo or 'PRODUCCIÓN' in texto_completo:
-                    # Rescate inteligente: Si está en la rama producción pero menciona un área, es Falla.
+                elif 'PRODUCCION' in validos[0] or 'PRODUCCIÓN' in validos[0]:
+                    # Rescate si el operario colgó una falla en la rama Producción
                     if any(x in texto_completo for x in ['LOGISTICA', 'LOGÍSTICA', 'MANTENIMIENTO', 'MATRICERIA', 'MATRICERÍA', 'TECNOLOGIA', 'TECNOLOGÍA', 'CALIDAD', 'GESTION', 'GESTIÓN']):
                         estado = 'Falla/Gestión'
                     else:
                         estado = 'Producción'
                         
-                # 2. MACRO Y DETALLE
+                # 2. ESCANEO INVERSO (Right-to-Left) PARA MACRO Y DETALLE
                 macro = 'Otra Falla/Gestión'
-                detalle = niveles[-1] # El último nivel seleccionado es la raíz del fallo
+                detalle = validos[-1] # Siempre es el último nodo seleccionado
                 
                 if estado == 'Falla/Gestión':
                     areas = {
@@ -219,26 +226,26 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
                         'DISPOSITIVO': 'Dispositivos'
                     }
                     
-                    # Identificar Macro analizando los niveles de arriba hacia abajo
-                    area_encontrada = False
-                    for nivel in niveles:
+                    # Escaneamos desde el nodo más profundo (ej: Nivel 6) hasta la raíz (Nivel 1)
+                    for nivel in reversed(validos):
+                        encontrada = False
                         for clave, valor in areas.items():
                             if clave in nivel:
                                 macro = valor
-                                area_encontrada = True
+                                encontrada = True
                                 break
-                        if area_encontrada:
-                            break
+                        if encontrada:
+                            break # En cuanto encuentra a quién pertenece (ej: Mantenimiento), deja de buscar
                             
-                    # Formateo Final idéntico al reporte diario: [MACRO] Detalle
+                    # Formateo Final para el PDF
                     if macro != 'Otra Falla/Gestión':
-                        detalle = f"[{macro.upper()}] {niveles[-1]}"
+                        detalle = f"[{macro.upper()}] {validos[-1]}"
                     else:
-                        detalle = niveles[-1]
+                        detalle = validos[-1]
                         
                 return estado, macro, detalle
 
-            # Aplicamos la función a cada fila creando las 3 columnas simultáneamente
+            # Aplicar la función a las 3 columnas nuevas
             df_raw[['Estado_Global', 'Categoria_Macro', 'Detalle_Final']] = df_raw.apply(
                 lambda row: pd.Series(parse_event_tree(row)), axis=1
             )
@@ -410,7 +417,7 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
                 top5 = df_f.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
                 
                 pdf.set_xy(10, 162); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(*theme_color); pdf.set_text_color(255)
-                # Damos más espacio al texto (100) y dejamos los porcentajes apretados para ver el motivo de falla
+                # Redistribuimos columnas para ganar espacio en el detalle de la falla (ahora 100 de ancho)
                 pdf.cell(100, 5, "FALLO", border=1, fill=True); pdf.cell(18, 5, "MIN", border=1, align='C', fill=True); pdf.cell(18, 5, "%", border=1, align='C', ln=True, fill=True)
                 pdf.set_font("Arial", '', 7.5); pdf.set_text_color(0); pdf.set_fill_color(255, 255, 255)
                 
