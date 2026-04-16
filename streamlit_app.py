@@ -159,18 +159,24 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
             mask_proyecto = (df_raw['Nivel Evento 1'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 2'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 3'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 4'].str.upper().str.contains('PROYECTO'))
             df_raw = df_raw[~mask_proyecto].copy()
 
+            # SECCIÓN ACTUALIZADA DE CLASIFICACIÓN DE EVENTOS
             def cat_estado(row):
                 t1 = row['Nivel Evento 1'].strip().upper()
                 t2 = row['Nivel Evento 2'].strip().upper()
+                # Consideramos Producción al tiempo productivo. TODO lo demás va a Falla/Gestión para analizarse
                 if 'PRODUC' in t1 or 'PRODUC' in t2: return 'Producción'
-                if 'PARADA' in t1 or 'PARADA' in t2: return 'Parada Programada'
                 return 'Falla/Gestión'
             
             def cat_macro(row):
                 n1 = row['Nivel Evento 1'].strip().upper()
-                n2 = row['Nivel Evento 2'].strip().title()
-                if 'GESTION' in n1 or 'GESTIÓN' in n1 or 'GESTION' in n2.upper() or 'GESTIÓN' in n2.upper(): return 'Gestión'
-                elif 'FALLA' in n1: return n2 if n2 else 'Fallas Generales'
+                n2 = row['Nivel Evento 2'].strip().upper()
+                # Clasificación inteligente de áreas
+                if 'MANTENIMIENTO' in n1 or 'MANTENIMIENTO' in n2: return 'Mantenimiento'
+                if 'MATRICERIA' in n1 or 'MATRICERÍA' in n1 or 'MATRICERIA' in n2: return 'Matricería'
+                if 'GESTION' in n1 or 'GESTIÓN' in n1 or 'GESTION' in n2: return 'Gestión'
+                if 'CALIDAD' in n1 or 'CALIDAD' in n2: return 'Calidad'
+                if 'PARADA' in n1: return 'Paradas y Descansos'
+                elif 'FALLA' in n1: return n2.title() if n2 else 'Fallas Generales'
                 return n1.title() if n1 else 'Sin Área'
             
             def get_det(row):
@@ -179,6 +185,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
                 n3 = row['Nivel Evento 3'].strip()
                 n4 = row['Nivel Evento 4'].strip()
                 
+                # Rescata el nivel más detallado que tenga registrado el operario
                 if n4 and n4.lower() not in ['nan', 'none', 'null', '']: return n4
                 if n3 and n3.lower() not in ['nan', 'none', 'null', '']: return n3
                 if n2 and n2.lower() not in ['nan', 'none', 'null', '']: return n2
@@ -407,13 +414,13 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
     df_t = df_t[df_t['Grupo'].isin(grupos_upper)]; df_p = df_p[df_p['Grupo'].isin(grupos_upper)]
     paginas = ['GENERAL'] + [g for g in grupos_upper if g in df_t['Grupo'].unique()]
 
-    # Definir valores de objetivo según el área para Scrap y RT
+    # Definir valores de objetivo exactos
     if area.upper() == "ESTAMPADO":
-        target_scrap = 0.5
-        target_rt = 2.0
+        target_scrap = 0.50
+        target_rt = 2.00
     else:
-        target_scrap = 0.3
-        target_rt = 2.0
+        target_scrap = 0.30
+        target_rt = 2.00
 
     for target in paginas:
         pdf.add_page(orientation='L'); pdf.set_auto_page_break(False); pdf.add_gradient_background()
@@ -441,9 +448,13 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         meses_map = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
         df_ev['Mes_Str'] = df_ev['Month'].map(meses_map)
 
-        f1 = px.bar(df_ev, x='Mes_Str', y='Totales', color_discrete_sequence=[theme_hex]); f1.update_traces(texttemplate='<b>%{y:.3s}</b>')
-        f2 = px.bar(df_ev, x='Mes_Str', y='% Scrap', color_discrete_sequence=[theme_hex]); f2.update_traces(texttemplate='<b>%{y:.2f}%</b>')
-        f3 = px.bar(df_ev, x='Mes_Str', y='% RT', color_discrete_sequence=[theme_hex]); f3.update_traces(texttemplate='<b>%{y:.2f}%</b>')
+        # LÓGICA DE COLORES DE BARRAS SI PASA EL OBJETIVO
+        df_ev['Color_Scrap'] = df_ev['% Scrap'].apply(lambda x: '#E74C3C' if x > target_scrap else theme_hex)
+        df_ev['Color_RT'] = df_ev['% RT'].apply(lambda x: '#E74C3C' if x > target_rt else theme_hex)
+
+        f1 = go.Figure(data=[go.Bar(x=df_ev['Mes_Str'], y=df_ev['Totales'], marker_color=theme_hex, text=df_ev['Totales'], texttemplate='<b>%{text:.3s}</b>')])
+        f2 = go.Figure(data=[go.Bar(x=df_ev['Mes_Str'], y=df_ev['% Scrap'], marker_color=df_ev['Color_Scrap'], text=df_ev['% Scrap'], texttemplate='<b>%{text:.2f}%</b>')])
+        f3 = go.Figure(data=[go.Bar(x=df_ev['Mes_Str'], y=df_ev['% RT'], marker_color=df_ev['Color_RT'], text=df_ev['% RT'], texttemplate='<b>%{text:.2f}%</b>')])
         
         titles = ["PIEZAS PRODUCIDAS MES A MES", "% DE SCRAP MES A MES", "% DE RT MES A MES"]
         for i, f in enumerate([f1, f2, f3]): 
@@ -453,7 +464,6 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
                 upper_limit = max_y * 1.3 if max_y > 0 else 1
             else: 
                 current_target = target_scrap if i == 1 else target_rt
-                # Asegura que el tope del gráfico no sea más bajo que la línea del objetivo
                 upper_limit = max(0.2, max_y * 1.3, current_target * 1.5)
                 # Dibuja la línea de objetivo
                 f.add_hline(y=current_target, line_dash="dash", line_width=2, line_color="#E74C3C", annotation_text=f"<b>Obj: {current_target}%</b>", annotation_font_color='black')
