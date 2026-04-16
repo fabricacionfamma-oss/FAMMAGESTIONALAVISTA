@@ -360,9 +360,13 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             add_trend_bar(df_t_target, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%) - EVOLUCIÓN MENSUAL', 10, 102, 0.75, 0.85)
             add_trend_bar(df_t_target, 'CALIDAD', 'CALIDAD (%) - EVOLUCIÓN MENSUAL', 150, 102, 0.75, 0.85)
             
-            # --- PROTECCIÓN ANTI-CIERRE DEL PDF EN LOS FALLOS ---
+            # --- TOP 5 FALLOS Y GRÁFICO ACUMULADO 100% ---
             pdf.draw_panel(10, 156, 136, 45); pdf.draw_panel(149, 156, 138, 45)
-            pdf.set_xy(10, 156); pdf.set_font("Times", 'B', 11); pdf.set_text_color(0); pdf.cell(136, 6, "TOP 5 FALLOS", border=0, ln=True, align='C')
+            pdf.set_xy(10, 156); pdf.set_font("Times", 'B', 11); pdf.set_text_color(0)
+            
+            # Título dinámico: si es la hoja GENERAL mostrará el top 5 de toda la planta
+            titulo_fallos = "TOP 5 FALLOS GENERALES" if target == 'GENERAL' else f"TOP 5 FALLOS - {target}"
+            pdf.cell(136, 6, titulo_fallos, border=0, ln=True, align='C')
             
             df_f = df_r_target[df_r_target['Estado_Global'] == 'Falla/Gestión'] if not df_r_target.empty else pd.DataFrame()
             
@@ -371,6 +375,7 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
                 mask_puras = ~df_f['Detalle_Final'].str.upper().apply(lambda x: any(excl in x for excl in excluir))
                 df_f_puras = df_f[mask_puras]
                 
+                # Nos quedamos solo con el Top 5
                 top5 = df_f_puras.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
                 
                 pdf.set_xy(10, 162); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(*theme_color); pdf.set_text_color(255)
@@ -383,19 +388,23 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
                     pdf.cell(30, 6, f"{r['Tiempo (Min)']:.0f}", border=1, align='C', fill=True)
                     pdf.cell(30, 6, f"{(r['Tiempo (Min)']/t_total)*100:.1f}%", border=1, align='C', ln=True, fill=True)
                 
+                # Gráfico Barra Horizontal 100% por Categoria_Macro (Mantenimiento, Gestion, etc)
                 df_macro = df_f.groupby('Categoria_Macro')['Tiempo (Min)'].sum().reset_index()
                 df_macro['%'] = df_macro['Tiempo (Min)'] / t_total
                 df_macro['Y'] = "Pérdidas"
                 
                 fig_stack = px.bar(df_macro, x='%', y='Y', color='Categoria_Macro', orientation='h', color_discrete_sequence=px.colors.qualitative.Safe)
                 fig_stack.update_traces(texttemplate='<b>%{x:.1%}</b>', textposition='inside', marker_line_color='rgba(0,0,0,0.8)', marker_line_width=2, opacity=0.9, textfont=dict(color='black', size=11))
-                fig_stack.update_layout(barmode='stack', title=dict(text="<b>PROPORCIÓN DE PÉRDIDAS ÁREAS MACRO (100%)</b>", font=dict(family="Times", size=13, color="black")), xaxis=dict(visible=False, range=[0, 1]), yaxis=dict(visible=False), margin=dict(t=30, b=5, l=10, r=10), legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, title="", font=dict(size=10)))
+                
+                # Configuramos el barmode='stack' y limitamos el eje X a 1 (100%)
+                fig_stack.update_layout(barmode='stack', title=dict(text="<b>PROPORCIÓN DE PÉRDIDAS POR ÁREA (100%)</b>", font=dict(family="Times", size=11, color="black")), xaxis=dict(visible=False, range=[0, 1]), yaxis=dict(visible=False), margin=dict(t=25, b=5, l=10, r=10), legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, title="", font=dict(size=9)))
+                
                 img_stack = save_chart(fig_stack, 600, 180); pdf.image(img_stack, 151, 158, 134); os.remove(img_stack)
             else:
                 pdf.set_xy(10, 175); pdf.set_font("Arial", 'I', 10); pdf.set_text_color(100)
                 pdf.cell(136, 6, "Excelente. No hay fallos registrados en este período.", 0, 1, 'C')
                 pdf.set_xy(149, 175); pdf.cell(138, 6, "Sin datos de fallas para graficar.", 0, 1, 'C')
-            
+
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
