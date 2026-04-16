@@ -363,25 +363,40 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             df_f = df_r_target[df_r_target['Estado_Global'] == 'Falla/Gestión'] if not df_r_target.empty else pd.DataFrame()
             
             if not df_f.empty and df_f['Tiempo (Min)'].sum() > 0:
-                top5 = df_f.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
+                excluir = ['BAÑO', 'BANO', 'REFRIGERIO', 'DESCANSO']
+                mask_puras = ~df_f['Detalle_Final'].str.upper().apply(lambda x: any(excl in x for excl in excluir))
+                df_f_puras = df_f[mask_puras]
+                
+                top5 = df_f_puras.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
                 
                 pdf.set_xy(10, 162); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(*theme_color); pdf.set_text_color(255)
-                pdf.cell(76, 5, "FALLO", border=1, fill=True); pdf.cell(30, 5, "MINUTOS", border=1, align='C', fill=True); pdf.cell(30, 5, "% TOTAL", border=1, align='C', ln=True, fill=True)
-                pdf.set_font("Arial", '', 8); pdf.set_text_color(0); pdf.set_fill_color(255, 255, 255)
+                # Redistribuimos columnas para ganar espacio en el detalle de la falla
+                pdf.cell(100, 5, "FALLO", border=1, fill=True); pdf.cell(18, 5, "MIN", border=1, align='C', fill=True); pdf.cell(18, 5, "%", border=1, align='C', ln=True, fill=True)
+                pdf.set_font("Arial", '', 7.5); pdf.set_text_color(0); pdf.set_fill_color(255, 255, 255)
                 
                 t_total = df_f['Tiempo (Min)'].sum()
                 for _, r in top5.iterrows():
-                    pdf.set_x(10); pdf.cell(76, 6, clean_text(str(r['Detalle_Final']))[:45], border=1, fill=True)
-                    pdf.cell(30, 6, f"{r['Tiempo (Min)']:.0f}", border=1, align='C', fill=True)
-                    pdf.cell(30, 6, f"{(r['Tiempo (Min)']/t_total)*100:.1f}%", border=1, align='C', ln=True, fill=True)
+                    pdf.set_x(10); pdf.cell(100, 6, clean_text(str(r['Detalle_Final']))[:70], border=1, fill=True)
+                    pdf.cell(18, 6, f"{r['Tiempo (Min)']:.0f}", border=1, align='C', fill=True)
+                    pdf.cell(18, 6, f"{(r['Tiempo (Min)']/t_total)*100:.1f}%", border=1, align='C', ln=True, fill=True)
                 
+                # Gráfico Barra Horizontal 100% por Categoria_Macro con Leyenda dinámica (sin etiquetas internas superpuestas)
                 df_macro = df_f.groupby('Categoria_Macro')['Tiempo (Min)'].sum().reset_index()
                 df_macro['%'] = df_macro['Tiempo (Min)'] / t_total
                 df_macro['Y'] = "Pérdidas"
+                # Creamos el texto de la leyenda incorporando el porcentaje
+                df_macro['Leyenda'] = df_macro.apply(lambda r: f"{r['Categoria_Macro']} ({r['%']:.1%})", axis=1)
                 
-                fig_stack = px.bar(df_macro, x='%', y='Y', color='Categoria_Macro', orientation='h', color_discrete_sequence=px.colors.qualitative.Safe)
-                fig_stack.update_traces(texttemplate='<b>%{x:.1%}</b>', textposition='inside', marker_line_color='rgba(0,0,0,0.8)', marker_line_width=2, opacity=0.9, textfont=dict(color='black', size=11))
-                fig_stack.update_layout(barmode='stack', title=dict(text="<b>PROPORCIÓN DE PÉRDIDAS POR ÁREA (100%)</b>", font=dict(family="Times", size=11, color="black")), xaxis=dict(visible=False, range=[0, 1]), yaxis=dict(visible=False), margin=dict(t=25, b=5, l=10, r=10), legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, title="", font=dict(size=9)))
+                fig_stack = px.bar(df_macro, x='%', y='Y', color='Leyenda', orientation='h', color_discrete_sequence=px.colors.qualitative.Safe)
+                fig_stack.update_traces(marker_line_color='rgba(0,0,0,0.8)', marker_line_width=2, opacity=0.9)
+                fig_stack.update_layout(
+                    barmode='stack', 
+                    title=dict(text="<b>PROPORCIÓN DE PÉRDIDAS POR ÁREA (100%)</b>", font=dict(family="Times", size=11, color="black")), 
+                    xaxis=dict(visible=False, range=[0, 1]), 
+                    yaxis=dict(visible=False), 
+                    margin=dict(t=25, b=30, l=10, r=10), 
+                    legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, title="", font=dict(size=9))
+                )
                 
                 img_stack = save_chart(fig_stack, 600, 180); pdf.image(img_stack, 151, 158, 134); os.remove(img_stack)
             else:
@@ -494,6 +509,7 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
             i4 = save_chart(f4, w=550, h=330); pdf.image(i4, x=151, y=23, w=133, h=h_br-2); os.remove(i4)
             i5 = save_chart(f5, w=550, h=330); pdf.image(i5, x=151, y=109.5, w=133, h=h_br-2); os.remove(i5)
             
+        # El recuadro de HS DE RT solo se renderiza si estamos en la hoja "GENERAL" y el área es "ESTAMPADO"
         if target == 'GENERAL' and area.upper() == 'ESTAMPADO':
             pdf.draw_panel(150, 196, 135, 12, 2, (240,240,240)); pdf.set_xy(150, 196); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0); pdf.cell(67.5, 12, "HS DE RT", 0, 0, 'C')
             pdf.draw_panel(217.5, 196, 67.5, 12, 2, (255,255,255)); pdf.set_xy(217.5, 196); pdf.cell(67.5, 12, f"{hs_rt:.1f}", 0, 1, 'C')
@@ -533,6 +549,7 @@ st.divider()
 st.write("### 3. Preparar y Descargar Reportes")
 c_d, c_p, c_g = st.columns(3)
 
+# Lógica de carga On-Demand usando st.session_state
 with c_d:
     st.markdown("#### ⚙️ Disponibilidad (OEE)")
     if not df_m.empty:
