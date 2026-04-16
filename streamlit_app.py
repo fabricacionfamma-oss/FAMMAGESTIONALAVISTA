@@ -104,9 +104,8 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         
         ini_str = fecha_ini.strftime('%Y-%m-%d 00:00:00')
         fin_str = fecha_fin.strftime('%Y-%m-%d 23:59:59')
-        ini_year_str = f"{anio}-01-01 00:00:00"
         
-        # --- 1. OEE Y PORCENTAJES (CON TIEMPOS PARA PONDERAR) ---
+        # --- 1. OEE Y PORCENTAJES ---
         q_oee_m = f"SELECT c.Name as Máquina, p.Performance as Perf_Num, p.Availability as Disp_Num, p.Quality as Cal_Num, p.Oee as OEE_Num, COALESCE(p.ProductiveTime, 0) as T_Operativo, (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month = {mes}"
         df_oee = conn.query(q_oee_m).fillna(0)
 
@@ -123,7 +122,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         q_top_m = f"SELECT c.Name as Máquina, COALESCE(pr.Code, 'S/C') as Pieza, SUM(COALESCE(p.Scrap, 0)) as Scrap, SUM(COALESCE(p.Rework, 0)) as RT FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId LEFT JOIN PRODUCT pr ON p.ProductId = pr.ProductId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name, pr.Code"
         df_piezas = conn.query(q_top_m).fillna(0)
 
-        # --- 4. TENDENCIAS MENSUALES (HISTÓRICO DEL AÑO) ---
+        # --- 4. TENDENCIAS MENSUALES ---
         q_trend_oee_m = f"SELECT p.Month, c.Name as Máquina, p.Performance as Perf_Num, p.Availability as Disp_Num, p.Quality as Cal_Num, p.Oee as OEE_Num, COALESCE(p.ProductiveTime, 0) as T_Operativo, (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month <= {mes}"
         q_trend_pcs_m = f"SELECT p.Month, c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas, SUM(COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0)) as Totales FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month <= {mes} GROUP BY p.Month, c.Name"
         
@@ -196,7 +195,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # ==========================================
-# 3. MOTOR: GESTIÓN A LA VISTA (OEE PONDERADO EXACTO)
+# 3. MOTOR: GESTIÓN A LA VISTA (OEE + FALLAS)
 # ==========================================
 def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw, df_trend):
     if area.upper() == "ESTAMPADO":
@@ -209,8 +208,6 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
     mapa_limpio = {str(k).strip().upper(): str(v).strip().upper() for k, v in MAQUINAS_MAP.items()}
     grupos_area_upper = [g.upper() for g in grupos_area]
     
-    pdf = ReportePDF(f"GESTIÓN A LA VISTA - {area}", label_reporte, theme_color)
-    
     df_m = df_metrics_pdf.copy(); df_t = df_trend.copy(); df_r = df_pdf_raw.copy()
         
     for d in [df_m, df_t, df_r]: 
@@ -218,8 +215,11 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             d['Grupo'] = d['Máquina'].astype(str).str.strip().str.upper().map(mapa_limpio).fillna('OTRO')
         else: d['Grupo'] = 'OTRO'
             
-    df_m = df_m[df_m['Grupo'].isin(grupos_area_upper)]; df_t = df_t[df_t['Grupo'].isin(grupos_area_upper)]; df_r = df_r[df_r['Grupo'].isin(grupos_area_upper)]
+    df_m = df_m[df_m['Grupo'].isin(grupos_area_upper)]
+    df_t = df_t[df_t['Grupo'].isin(grupos_area_upper)]
+    df_r = df_r[df_r['Grupo'].isin(grupos_area_upper)]
     
+    pdf = ReportePDF(f"GESTIÓN A LA VISTA - {area}", label_reporte, theme_color)
     paginas = ['GENERAL'] if area.upper() == "GLOBAL" else ['GENERAL'] + [g for g in grupos_area_upper if g in df_m['Grupo'].unique()]
 
     for target in paginas:
@@ -240,12 +240,8 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
         pdf.set_fill_color(255, 255, 255); pdf.set_font("Arial", '', 10); pdf.set_text_color(0)
         pdf.cell(40, 6, label_reporte, 1, 0, 'C', fill=True); pdf.set_font("Arial", 'B', 10); pdf.cell(197, 6, "EMPRESA: FAMMA", 1, 0, 'C', fill=True); pdf.set_font("Arial", '', 10); pdf.cell(40, 6, "DISPONIBILIDAD", 1, 1, 'C', fill=True)
 
-        if not df_m_target.empty:
-            valid_m = df_m_target.copy()
-        else:
-            valid_m = pd.DataFrame()
+        valid_m = df_m_target.copy() if not df_m_target.empty else pd.DataFrame()
 
-        # --- MOTOR MATEMÁTICO: PROMEDIO PONDERADO EXACTO A WIIDEM ---
         t_plan = valid_m['T_Planificado'].sum() if not valid_m.empty else 0
         t_op = valid_m['T_Operativo'].sum() if not valid_m.empty else 0
         
@@ -287,41 +283,30 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
 
         def add_trend_bar(df_in, col, title, x_pos, y_pos, min_t, max_t, draw_large=False):
             if df_in.empty: return
-            
-            # --- CÁLCULO PONDERADO POR MES ---
             res_mensual = []
             for m, grp in df_in.groupby('Month'):
-                s_plan = grp['T_Planificado'].sum()
-                s_op = grp['T_Operativo'].sum()
-                
+                s_plan = grp['T_Planificado'].sum(); s_op = grp['T_Operativo'].sum()
                 if col == 'OEE': val = (grp['OEE_Num'] * grp['T_Planificado']).sum() / s_plan if s_plan > 0 else grp['OEE_Num'].mean()
                 elif col == 'PERFORMANCE': val = (grp['Perf_Num'] * grp['T_Operativo']).sum() / s_op if s_op > 0 else grp['Perf_Num'].mean()
                 elif col == 'DISPONIBILIDAD': val = (grp['Disp_Num'] * grp['T_Planificado']).sum() / s_plan if s_plan > 0 else grp['Disp_Num'].mean()
                 elif col == 'CALIDAD': val = (grp['Cal_Num'] * grp['T_Operativo']).sum() / s_op if s_op > 0 else grp['Cal_Num'].mean()
-                
                 res_mensual.append({'Month': int(m), 'Val': val})
                 
             if not res_mensual: return
             df_g = pd.DataFrame(res_mensual)
             if df_g['Val'].max() > 1.5: df_g['Val'] /= 100.0
 
-            # --- ACUMULADO YTD (PROMEDIO PONDERADO DEL AÑO) ---
-            s_plan_tot = df_in['T_Planificado'].sum()
-            s_op_tot = df_in['T_Operativo'].sum()
-            
+            s_plan_tot = df_in['T_Planificado'].sum(); s_op_tot = df_in['T_Operativo'].sum()
             ytd_v = 0
             if col == 'OEE': ytd_v = (df_in['OEE_Num'] * df_in['T_Planificado']).sum() / s_plan_tot if s_plan_tot > 0 else df_in['OEE_Num'].mean()
             elif col == 'PERFORMANCE': ytd_v = (df_in['Perf_Num'] * df_in['T_Operativo']).sum() / s_op_tot if s_op_tot > 0 else df_in['Perf_Num'].mean()
             elif col == 'DISPONIBILIDAD': ytd_v = (df_in['Disp_Num'] * df_in['T_Planificado']).sum() / s_plan_tot if s_plan_tot > 0 else df_in['Disp_Num'].mean()
             elif col == 'CALIDAD': ytd_v = (df_in['Cal_Num'] * df_in['T_Operativo']).sum() / s_op_tot if s_op_tot > 0 else df_in['Cal_Num'].mean()
-            
             if ytd_v > 1.5: ytd_v /= 100.0
 
             def get_c(v): return '#E74C3C' if v < min_t else ('#F1C40F' if v < max_t else '#2ECC71')
-            
             df_g['Mes_Str'] = df_g['Month'].map({1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'})
             df_g['Color'] = df_g['Val'].apply(get_c)
-            
             ytd_row = pd.DataFrame([{'Month': 99, 'Mes_Str': 'Acum.', 'Val': ytd_v, 'Color': get_c(ytd_v)}])
             df_g = pd.concat([df_g, ytd_row], ignore_index=True)
 
@@ -331,9 +316,7 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             fig = go.Figure(data=[go.Bar(x=df_g['Mes_Str'], y=df_g['Val'], marker=dict(color=df_g['Color'], line=dict(color='rgba(0,0,0,0.8)', width=2)), text=df_g['Val'], texttemplate='<b>%{text:.1%}</b>', textposition='outside', opacity=0.85)])
             fig.add_hline(y=min_t, line_dash="dash", line_color="#E74C3C", annotation_text=f"<b>{min_t*100:.0f}%</b>", annotation_font_color='black')
             fig.add_hline(y=max_t, line_dash="dash", line_color="#2ECC71", annotation_text=f"<b>{max_t*100:.0f}%</b>", annotation_font_color='black')
-            
-            if len(df_g) > 1:
-                fig.add_vline(x=len(df_g) - 1.5, line_width=2, line_dash="dash", line_color="rgba(0,0,0,0.4)")
+            if len(df_g) > 1: fig.add_vline(x=len(df_g) - 1.5, line_width=2, line_dash="dash", line_color="rgba(0,0,0,0.4)")
             
             fig.update_layout(title=dict(text=f"<b>{title}</b>", font=dict(family="Times", size=13, color="black")), margin=dict(t=30, b=20, l=10, r=10), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', yaxis=dict(range=[0, upper_limit], visible=False), xaxis_title="")
             fig.update_traces(textfont=dict(color='black', size=11, family="Arial"), cliponaxis=False)
@@ -342,7 +325,7 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             w_pdf = 132 if not draw_large else 134
             img = save_chart(fig, w_img, h_img); pdf.image(img, x=x_pos+2, y=y_pos+2, w=w_pdf); os.remove(img)
 
-        # === DIBUJO DE LOS GRÁFICOS INFERIORES ===
+        # === DIBUJO DE LOS GRÁFICOS INFERIORES Y FALLAS ===
         if area.upper() == "GLOBAL":
             pdf.draw_panel(10, 48, 136, 75); pdf.draw_panel(149, 48, 138, 75)
             add_trend_bar(df_t_target, 'OEE', 'OEE (%) - EVOLUCIÓN MENSUAL', 10, 48, 0.75, 0.85, draw_large=True)
@@ -364,7 +347,6 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             pdf.draw_panel(10, 156, 136, 45); pdf.draw_panel(149, 156, 138, 45)
             pdf.set_xy(10, 156); pdf.set_font("Times", 'B', 11); pdf.set_text_color(0)
             
-            # Título dinámico: si es la hoja GENERAL mostrará el top 5 de toda la planta
             titulo_fallos = "TOP 5 FALLOS GENERALES" if target == 'GENERAL' else f"TOP 5 FALLOS - {target}"
             pdf.cell(136, 6, titulo_fallos, border=0, ln=True, align='C')
             
@@ -375,7 +357,6 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
                 mask_puras = ~df_f['Detalle_Final'].str.upper().apply(lambda x: any(excl in x for excl in excluir))
                 df_f_puras = df_f[mask_puras]
                 
-                # Nos quedamos solo con el Top 5
                 top5 = df_f_puras.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
                 
                 pdf.set_xy(10, 162); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(*theme_color); pdf.set_text_color(255)
@@ -388,15 +369,12 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
                     pdf.cell(30, 6, f"{r['Tiempo (Min)']:.0f}", border=1, align='C', fill=True)
                     pdf.cell(30, 6, f"{(r['Tiempo (Min)']/t_total)*100:.1f}%", border=1, align='C', ln=True, fill=True)
                 
-                # Gráfico Barra Horizontal 100% por Categoria_Macro (Mantenimiento, Gestion, etc)
                 df_macro = df_f.groupby('Categoria_Macro')['Tiempo (Min)'].sum().reset_index()
                 df_macro['%'] = df_macro['Tiempo (Min)'] / t_total
                 df_macro['Y'] = "Pérdidas"
                 
                 fig_stack = px.bar(df_macro, x='%', y='Y', color='Categoria_Macro', orientation='h', color_discrete_sequence=px.colors.qualitative.Safe)
                 fig_stack.update_traces(texttemplate='<b>%{x:.1%}</b>', textposition='inside', marker_line_color='rgba(0,0,0,0.8)', marker_line_width=2, opacity=0.9, textfont=dict(color='black', size=11))
-                
-                # Configuramos el barmode='stack' y limitamos el eje X a 1 (100%)
                 fig_stack.update_layout(barmode='stack', title=dict(text="<b>PROPORCIÓN DE PÉRDIDAS POR ÁREA (100%)</b>", font=dict(family="Times", size=11, color="black")), xaxis=dict(visible=False, range=[0, 1]), yaxis=dict(visible=False), margin=dict(t=25, b=5, l=10, r=10), legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, title="", font=dict(size=9)))
                 
                 img_stack = save_chart(fig_stack, 600, 180); pdf.image(img_stack, 151, 158, 134); os.remove(img_stack)
@@ -422,10 +400,8 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
     grupos_upper = [g.upper() for g in grupos]
     
     df_t = df_trend.copy(); df_p = df_piezas.copy()
-    
     for d in [df_t, df_p]: 
-        if not d.empty and 'Máquina' in d.columns:
-            d['Grupo'] = d['Máquina'].astype(str).str.strip().str.upper().map(mapa_limpio).fillna('OTRO')
+        if not d.empty and 'Máquina' in d.columns: d['Grupo'] = d['Máquina'].astype(str).str.strip().str.upper().map(mapa_limpio).fillna('OTRO')
         else: d['Grupo'] = 'OTRO'
 
     df_t = df_t[df_t['Grupo'].isin(grupos_upper)]; df_p = df_p[df_p['Grupo'].isin(grupos_upper)]
@@ -437,8 +413,7 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         if target == 'GENERAL':
             df_t_target = df_t; df_p_target = df_p
         else:
-            df_t_target = df_t[df_t['Grupo'] == target]
-            df_p_target = df_p[df_p['Grupo'] == target]
+            df_t_target = df_t[df_t['Grupo'] == target]; df_p_target = df_p[df_p['Grupo'] == target]
         
         pdf.set_y(10); pdf.set_fill_color(*theme_color); pdf.set_text_color(255); pdf.set_font("Arial", 'B', 10)
         pdf.cell(20, 6, "MES", 1, 0, 'C', fill=True); pdf.cell(20, 6, "AÑO", 1, 0, 'C', fill=True); pdf.cell(197, 6, f"PLANTA {area.upper()} - {target}", 1, 0, 'C', fill=True); pdf.cell(40, 6, "AREA", 1, 1, 'C', fill=True)
@@ -446,7 +421,6 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         pdf.cell(20, 6, str(mes_sel), 1, 0, 'C', fill=True); pdf.cell(20, 6, str(anio_sel), 1, 0, 'C', fill=True); pdf.set_font("Arial", 'B', 10); pdf.cell(197, 6, "EMPRESA: FAMMA", 1, 0, 'C', fill=True); pdf.set_font("Arial", '', 10); pdf.cell(40, 6, "PRODUCTIVO", 1, 1, 'C', fill=True)
 
         if df_t_target.empty: continue
-        
         for col in ['Buenas', 'Observadas', 'Retrabajo', 'Totales']:
             if col in df_t_target.columns: df_t_target[col] = pd.to_numeric(df_t_target[col], errors='coerce').fillna(0)
 
@@ -466,8 +440,7 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         titles = ["PIEZAS PRODUCIDAS MES A MES", "% DE SCRAP MES A MES", "% DE RT MES A MES"]
         for i, f in enumerate([f1, f2, f3]): 
             max_y = df_ev['Totales'].max() if i==0 else (df_ev['% Scrap'].max() if i==1 else df_ev['% RT'].max())
-            if i == 0: upper_limit = max_y * 1.3 if max_y > 0 else 1
-            else: upper_limit = max(0.2, max_y * 1.3)
+            upper_limit = max_y * 1.3 if max_y > 0 else 1 if i == 0 else max(0.2, max_y * 1.3)
             f.update_yaxes(range=[0, upper_limit])
             f.update_layout(title=dict(text=f"<b>{titles[i]}</b>", font=dict(family="Times", size=13, color="black")), margin=dict(l=10, r=10, t=30, b=20), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis=dict(visible=False))
             f.update_traces(textposition="outside", cliponaxis=False, textfont=dict(color='black', size=11, family="Arial"), marker_line_color='rgba(0,0,0,0.8)', marker_line_width=2, opacity=0.85)
@@ -524,35 +497,71 @@ with st.spinner("Conectando con la base de datos de FAMMA..."):
     df_m, df_r, df_t, df_p = fetch_data_from_db(ini, fin, m_sel, a_sel)
 
 with st.expander("🔍 Previsualizar Datos Crudos Extraídos"):
-    st.write("**Datos de Máquinas y OEE:**", df_m.head(15) if not df_m.empty else "Vacío")
+    st.write("**Datos de Máquinas y OEE:**", df_m.head(5) if not df_m.empty else "Vacío")
     st.write("**Datos de Piezas Totales:**", f"{df_p['Scrap'].sum() if not df_p.empty else 0} Scrap | {df_p['RT'].sum() if not df_p.empty else 0} RT")
+    st.write("**Eventos extraídos de la BD (Fallas/Paradas):**", df_r.head(10) if not df_r.empty else "Vacío - No hay registros en este mes/año en la tabla EVENT_01")
 
 st.write("### 2. Datos Manuales (Informe Productivo)")
 hs_rt = st.number_input("Horas de RT:", min_value=0.0, max_value=1000.0, value=0.0, step=1.0)
 
 st.divider()
-st.write("### 3. Descargar Reportes")
+st.write("### 3. Preparar y Descargar Reportes")
 c_d, c_p, c_g = st.columns(3)
 
+# Lógica de carga On-Demand usando st.session_state
 with c_d:
     st.markdown("#### ⚙️ Disponibilidad (OEE)")
     if not df_m.empty:
-        st.download_button("📥 Bajar PDF Estampado", crear_pdf_gestion_a_la_vista("Estampado", lab, df_m, df_r, df_t), "Disp_Estampado.pdf", use_container_width=True)
-        st.download_button("📥 Bajar PDF Soldadura", crear_pdf_gestion_a_la_vista("Soldadura", lab, df_m, df_r, df_t), "Disp_Soldadura.pdf", use_container_width=True)
+        # Botón para preparar Estampado
+        if st.button("⚙️ Preparar PDF Estampado"):
+            with st.spinner("Generando documento..."):
+                st.session_state['pdf_oee_est'] = crear_pdf_gestion_a_la_vista("Estampado", lab, df_m, df_r, df_t)
+        
+        # Si ya se preparó, mostrar el botón de Descarga
+        if 'pdf_oee_est' in st.session_state:
+            st.download_button("📥 Bajar PDF Estampado", data=st.session_state['pdf_oee_est'], file_name="Disp_Estampado.pdf", mime="application/pdf")
+            
+        st.write("---")
+        
+        # Botón para preparar Soldadura
+        if st.button("⚙️ Preparar PDF Soldadura"):
+            with st.spinner("Generando documento..."):
+                st.session_state['pdf_oee_sol'] = crear_pdf_gestion_a_la_vista("Soldadura", lab, df_m, df_r, df_t)
+        
+        if 'pdf_oee_sol' in st.session_state:
+            st.download_button("📥 Bajar PDF Soldadura", data=st.session_state['pdf_oee_sol'], file_name="Disp_Soldadura.pdf", mime="application/pdf")
     else:
-        st.error("No hay datos para generar PDFs.")
+        st.error("No hay datos.")
 
 with c_p:
     st.markdown("#### 🏭 Informe Productivo (Calidad)")
     if not df_t.empty:
-        st.download_button("📥 Bajar PDF Estampado", crear_pdf_informe_productivo("Estampado", lab, df_t, df_p, m_sel, a_sel, hs_rt), "Prod_Estampado.pdf", use_container_width=True)
-        st.download_button("📥 Bajar PDF Soldadura", crear_pdf_informe_productivo("Soldadura", lab, df_t, df_p, m_sel, a_sel, hs_rt), "Prod_Soldadura.pdf", use_container_width=True)
+        if st.button("🏭 Preparar Prod. Estampado"):
+            with st.spinner("Generando documento..."):
+                st.session_state['pdf_prod_est'] = crear_pdf_informe_productivo("Estampado", lab, df_t, df_p, m_sel, a_sel, hs_rt)
+                
+        if 'pdf_prod_est' in st.session_state:
+            st.download_button("📥 Bajar Prod. Estampado", data=st.session_state['pdf_prod_est'], file_name="Prod_Estampado.pdf", mime="application/pdf")
+        
+        st.write("---")
+        
+        if st.button("🏭 Preparar Prod. Soldadura"):
+            with st.spinner("Generando documento..."):
+                st.session_state['pdf_prod_sol'] = crear_pdf_informe_productivo("Soldadura", lab, df_t, df_p, m_sel, a_sel, hs_rt)
+                
+        if 'pdf_prod_sol' in st.session_state:
+            st.download_button("📥 Bajar Prod. Soldadura", data=st.session_state['pdf_prod_sol'], file_name="Prod_Soldadura.pdf", mime="application/pdf")
     else:
-        st.error("No hay datos para generar PDFs.")
+        st.error("No hay datos.")
 
 with c_g:
     st.markdown("#### 🌎 Reporte Maestro")
     if not df_m.empty:
-        st.download_button("📥 Bajar PDF Global", crear_pdf_gestion_a_la_vista("GLOBAL", lab, df_m, df_r, df_t), "Disp_Global_Famma.pdf", use_container_width=True)
+        if st.button("🌎 Preparar PDF Global"):
+            with st.spinner("Generando documento maestro..."):
+                st.session_state['pdf_oee_glob'] = crear_pdf_gestion_a_la_vista("GLOBAL", lab, df_m, df_r, df_t)
+                
+        if 'pdf_oee_glob' in st.session_state:
+            st.download_button("📥 Bajar PDF Global", data=st.session_state['pdf_oee_glob'], file_name="Disp_Global_Famma.pdf", mime="application/pdf")
     else:
-        st.error("No hay datos para generar PDF.")
+        st.error("No hay datos.")
