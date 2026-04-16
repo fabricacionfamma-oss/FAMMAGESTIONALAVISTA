@@ -134,8 +134,22 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         else:
             df_trend = df_t_pcs if not df_t_pcs.empty else df_t_oee
 
-        # --- 5. EVENTOS ---
-        q_event = f"SELECT c.Name as Máquina, e.Interval as [Tiempo (Min)], t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4] FROM EVENT_01 e LEFT JOIN CELL c ON e.CellId = c.CellId LEFT JOIN EVENTTYPE t1 ON e.EventTypeLevel1 = t1.EventTypeId LEFT JOIN EVENTTYPE t2 ON e.EventTypeLevel2 = t2.EventTypeId LEFT JOIN EVENTTYPE t3 ON e.EventTypeLevel3 = t3.EventTypeId LEFT JOIN EVENTTYPE t4 ON e.EventTypeLevel4 = t4.EventTypeId WHERE e.Date BETWEEN '{ini_str}' AND '{fin_str}'"
+        # --- 5. EVENTOS: LOGICA AVANZADA DE RECONOCIMIENTO ---
+        q_event = f"""
+            SELECT c.Name as Máquina, e.Interval as [Tiempo (Min)], 
+                   t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], 
+                   t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4],
+                   t5.Name as [Nivel Evento 5], t6.Name as [Nivel Evento 6]
+            FROM EVENT_01 e 
+            LEFT JOIN CELL c ON e.CellId = c.CellId 
+            LEFT JOIN EVENTTYPE t1 ON e.EventTypeLevel1 = t1.EventTypeId 
+            LEFT JOIN EVENTTYPE t2 ON e.EventTypeLevel2 = t2.EventTypeId 
+            LEFT JOIN EVENTTYPE t3 ON e.EventTypeLevel3 = t3.EventTypeId 
+            LEFT JOIN EVENTTYPE t4 ON e.EventTypeLevel4 = t4.EventTypeId
+            LEFT JOIN EVENTTYPE t5 ON e.EventTypeLevel5 = t5.EventTypeId
+            LEFT JOIN EVENTTYPE t6 ON e.EventTypeLevel6 = t6.EventTypeId
+            WHERE e.Date BETWEEN '{ini_str}' AND '{fin_str}'
+        """
         df_raw = conn.query(q_event)
 
         # === BLINDAJE Y CONVERSIÓN ===
@@ -152,49 +166,38 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
             df_raw = pd.DataFrame(columns=['Máquina', 'Tiempo (Min)', 'Nivel Evento 1', 'Nivel Evento 2', 'Nivel Evento 3', 'Nivel Evento 4', 'Estado_Global', 'Categoria_Macro', 'Detalle_Final'])
         else:
             df_raw['Tiempo (Min)'] = pd.to_numeric(df_raw['Tiempo (Min)'], errors='coerce').fillna(0)
-            for col in ['Nivel Evento 1', 'Nivel Evento 2', 'Nivel Evento 3', 'Nivel Evento 4']:
+            cols_niveles = ['Nivel Evento 1', 'Nivel Evento 2', 'Nivel Evento 3', 'Nivel Evento 4', 'Nivel Evento 5', 'Nivel Evento 6']
+            for col in cols_niveles:
                 if col in df_raw.columns: df_raw[col] = df_raw[col].fillna('').astype(str)
                 else: df_raw[col] = ''
-                    
-            mask_proyecto = (df_raw['Nivel Evento 1'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 2'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 3'].str.upper().str.contains('PROYECTO') | df_raw['Nivel Evento 4'].str.upper().str.contains('PROYECTO'))
-            df_raw = df_raw[~mask_proyecto].copy()
 
-            # SECCIÓN ACTUALIZADA DE CLASIFICACIÓN DE EVENTOS
-            def cat_estado(row):
-                t1 = row['Nivel Evento 1'].strip().upper()
-                t2 = row['Nivel Evento 2'].strip().upper()
-                # Consideramos Producción al tiempo productivo. TODO lo demás va a Falla/Gestión para analizarse
-                if 'PRODUC' in t1 or 'PRODUC' in t2: return 'Producción'
+            # Lógica extraída del modelo para clasificar inteligentemente 
+            def categorizar_estado(row):
+                texto_completo = " ".join([str(row.get(c, '')) for c in cols_niveles]).upper()
+                if 'PRODUCCION' in texto_completo or 'PRODUCCIÓN' in texto_completo: return 'Producción'
+                if 'PROYECTO' in texto_completo: return 'Proyecto'
+                if 'BAÑO' in texto_completo or 'BANO' in texto_completo or 'REFRIGERIO' in texto_completo or 'DESCANSO' in texto_completo: return 'Descanso'
+                if 'PARADA PROGRAMADA' in texto_completo or 'SMED' in texto_completo: return 'Parada Programada'
                 return 'Falla/Gestión'
-            
-            def cat_macro(row):
-                n1 = row['Nivel Evento 1'].strip().upper()
-                n2 = row['Nivel Evento 2'].strip().upper()
-                # Clasificación inteligente de áreas
-                if 'MANTENIMIENTO' in n1 or 'MANTENIMIENTO' in n2: return 'Mantenimiento'
-                if 'MATRICERIA' in n1 or 'MATRICERÍA' in n1 or 'MATRICERIA' in n2: return 'Matricería'
-                if 'GESTION' in n1 or 'GESTIÓN' in n1 or 'GESTION' in n2: return 'Gestión'
-                if 'CALIDAD' in n1 or 'CALIDAD' in n2: return 'Calidad'
-                if 'PARADA' in n1: return 'Paradas y Descansos'
-                elif 'FALLA' in n1: return n2.title() if n2 else 'Fallas Generales'
-                return n1.title() if n1 else 'Sin Área'
-            
-            def get_det(row):
-                n1 = row['Nivel Evento 1'].strip().upper()
-                n2 = row['Nivel Evento 2'].strip()
-                n3 = row['Nivel Evento 3'].strip()
-                n4 = row['Nivel Evento 4'].strip()
+
+            def clasificar_macro(row):
+                texto_completo = " ".join([str(row.get(c, '')) for c in cols_niveles]).upper()
+                categorias_clave = ["MANTENIMIENTO", "MATRICERIA", "DISPOSITIVOS", "TECNOLOGIA", "GESTION", "LOGISTICA", "CALIDAD"]
+                for cat in categorias_clave:
+                    if cat in texto_completo:
+                        return cat.capitalize()
+                return 'Otra Falla/Gestión'
+
+            def obtener_detalle_final(row):
+                niveles = [str(row.get(c, '')) for c in cols_niveles]
+                validos = [n.strip() for n in niveles if n.strip() and n.strip().lower() not in ['none', 'nan', 'null']]
                 
-                # Rescata el nivel más detallado que tenga registrado el operario
-                if n4 and n4.lower() not in ['nan', 'none', 'null', '']: return n4
-                if n3 and n3.lower() not in ['nan', 'none', 'null', '']: return n3
-                if n2 and n2.lower() not in ['nan', 'none', 'null', '']: return n2
-                if n1 and n1.lower() not in ['nan', 'none', 'null', '']: return n1
-                return "Sin detalle"
+                if not validos: return "Sin detalle en sistema"
+                return validos[-1].upper()
                 
-            df_raw['Estado_Global'] = df_raw.apply(cat_estado, axis=1)
-            df_raw['Categoria_Macro'] = df_raw.apply(cat_macro, axis=1)
-            df_raw['Detalle_Final'] = df_raw.apply(get_det, axis=1)
+            df_raw['Estado_Global'] = df_raw.apply(categorizar_estado, axis=1)
+            df_raw['Categoria_Macro'] = df_raw.apply(clasificar_macro, axis=1)
+            df_raw['Detalle_Final'] = df_raw.apply(obtener_detalle_final, axis=1)
 
         return df_metrics, df_raw, df_trend, df_piezas
     except Exception as e: 
@@ -360,11 +363,7 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             df_f = df_r_target[df_r_target['Estado_Global'] == 'Falla/Gestión'] if not df_r_target.empty else pd.DataFrame()
             
             if not df_f.empty and df_f['Tiempo (Min)'].sum() > 0:
-                excluir = ['BAÑO', 'BANO', 'REFRIGERIO', 'DESCANSO']
-                mask_puras = ~df_f['Detalle_Final'].str.upper().apply(lambda x: any(excl in x for excl in excluir))
-                df_f_puras = df_f[mask_puras]
-                
-                top5 = df_f_puras.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
+                top5 = df_f.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
                 
                 pdf.set_xy(10, 162); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(*theme_color); pdf.set_text_color(255)
                 pdf.cell(76, 5, "FALLO", border=1, fill=True); pdf.cell(30, 5, "MINUTOS", border=1, align='C', fill=True); pdf.cell(30, 5, "% TOTAL", border=1, align='C', ln=True, fill=True)
@@ -465,7 +464,6 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
             else: 
                 current_target = target_scrap if i == 1 else target_rt
                 upper_limit = max(0.2, max_y * 1.3, current_target * 1.5)
-                # Dibuja la línea de objetivo
                 f.add_hline(y=current_target, line_dash="dash", line_width=2, line_color="#E74C3C", annotation_text=f"<b>Obj: {current_target}%</b>", annotation_font_color='black')
                 
             f.update_yaxes(range=[0, upper_limit])
@@ -496,7 +494,6 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
             i4 = save_chart(f4, w=550, h=330); pdf.image(i4, x=151, y=23, w=133, h=h_br-2); os.remove(i4)
             i5 = save_chart(f5, w=550, h=330); pdf.image(i5, x=151, y=109.5, w=133, h=h_br-2); os.remove(i5)
             
-        # El recuadro de HS DE RT solo se renderiza si estamos en la hoja "GENERAL" y el área es "ESTAMPADO"
         if target == 'GENERAL' and area.upper() == 'ESTAMPADO':
             pdf.draw_panel(150, 196, 135, 12, 2, (240,240,240)); pdf.set_xy(150, 196); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0); pdf.cell(67.5, 12, "HS DE RT", 0, 0, 'C')
             pdf.draw_panel(217.5, 196, 67.5, 12, 2, (255,255,255)); pdf.set_xy(217.5, 196); pdf.cell(67.5, 12, f"{hs_rt:.1f}", 0, 1, 'C')
@@ -536,26 +533,20 @@ st.divider()
 st.write("### 3. Preparar y Descargar Reportes")
 c_d, c_p, c_g = st.columns(3)
 
-# Lógica de carga On-Demand usando st.session_state
 with c_d:
     st.markdown("#### ⚙️ Disponibilidad (OEE)")
     if not df_m.empty:
-        # Botón para preparar Estampado
         if st.button("⚙️ Preparar PDF Estampado"):
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_oee_est'] = crear_pdf_gestion_a_la_vista("Estampado", lab, df_m, df_r, df_t)
-        
-        # Si ya se preparó, mostrar el botón de Descarga
         if 'pdf_oee_est' in st.session_state:
             st.download_button("📥 Bajar PDF Estampado", data=st.session_state['pdf_oee_est'], file_name="Disp_Estampado.pdf", mime="application/pdf")
             
         st.write("---")
         
-        # Botón para preparar Soldadura
         if st.button("⚙️ Preparar PDF Soldadura"):
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_oee_sol'] = crear_pdf_gestion_a_la_vista("Soldadura", lab, df_m, df_r, df_t)
-        
         if 'pdf_oee_sol' in st.session_state:
             st.download_button("📥 Bajar PDF Soldadura", data=st.session_state['pdf_oee_sol'], file_name="Disp_Soldadura.pdf", mime="application/pdf")
     else:
@@ -567,7 +558,6 @@ with c_p:
         if st.button("🏭 Preparar Prod. Estampado"):
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_prod_est'] = crear_pdf_informe_productivo("Estampado", lab, df_t, df_p, m_sel, a_sel, hs_rt)
-                
         if 'pdf_prod_est' in st.session_state:
             st.download_button("📥 Bajar Prod. Estampado", data=st.session_state['pdf_prod_est'], file_name="Prod_Estampado.pdf", mime="application/pdf")
         
@@ -576,7 +566,6 @@ with c_p:
         if st.button("🏭 Preparar Prod. Soldadura"):
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_prod_sol'] = crear_pdf_informe_productivo("Soldadura", lab, df_t, df_p, m_sel, a_sel, hs_rt)
-                
         if 'pdf_prod_sol' in st.session_state:
             st.download_button("📥 Bajar Prod. Soldadura", data=st.session_state['pdf_prod_sol'], file_name="Prod_Soldadura.pdf", mime="application/pdf")
     else:
@@ -588,7 +577,6 @@ with c_g:
         if st.button("🌎 Preparar PDF Global"):
             with st.spinner("Generando documento maestro..."):
                 st.session_state['pdf_oee_glob'] = crear_pdf_gestion_a_la_vista("GLOBAL", lab, df_m, df_r, df_t)
-                
         if 'pdf_oee_glob' in st.session_state:
             st.download_button("📥 Bajar PDF Global", data=st.session_state['pdf_oee_glob'], file_name="Disp_Global_Famma.pdf", mime="application/pdf")
     else:
