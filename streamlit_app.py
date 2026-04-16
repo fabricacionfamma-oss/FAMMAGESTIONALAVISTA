@@ -181,18 +181,31 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
 
             def categorizar_estado(row):
                 texto_completo = " ".join([str(row.get(c, '')) for c in cols_niveles]).upper()
-                if 'PRODUCCION' in texto_completo or 'PRODUCCIÓN' in texto_completo: return 'Producción'
+                
                 if 'PROYECTO' in texto_completo: return 'Proyecto'
                 if 'BAÑO' in texto_completo or 'BANO' in texto_completo or 'REFRIGERIO' in texto_completo or 'DESCANSO' in texto_completo: return 'Descanso'
                 if 'PARADA PROGRAMADA' in texto_completo or 'SMED' in texto_completo: return 'Parada Programada'
+                
+                # Rescate de fallas mal clasificadas (Operario las colgó en Producción por error)
+                palabras_falla = ['LOGISTICA', 'LOGÍSTICA', 'MANTENIMIENTO', 'MATRICERIA', 'MATRICERÍA', 
+                                  'TECNOLOGIA', 'TECNOLOGÍA', 'CALIDAD', 'FALLA', 'GESTION', 'GESTIÓN']
+                if any(p in texto_completo for p in palabras_falla): 
+                    return 'Falla/Gestión'
+                    
+                if 'PRODUCCION' in texto_completo or 'PRODUCCIÓN' in texto_completo: return 'Producción'
                 return 'Falla/Gestión'
 
             def clasificar_macro(row):
                 texto_completo = " ".join([str(row.get(c, '')) for c in cols_niveles]).upper()
-                categorias_clave = ["MANTENIMIENTO", "MATRICERIA", "DISPOSITIVOS", "TECNOLOGIA", "GESTION", "LOGISTICA", "CALIDAD"]
-                for cat in categorias_clave:
-                    if cat in texto_completo:
-                        return cat.capitalize()
+                
+                if 'MANTENIMIENTO' in texto_completo: return 'Mantenimiento'
+                if 'MATRICERIA' in texto_completo or 'MATRICERÍA' in texto_completo: return 'Matricería'
+                if 'DISPOSITIVO' in texto_completo: return 'Dispositivos'
+                if 'TECNOLOGIA' in texto_completo or 'TECNOLOGÍA' in texto_completo: return 'Tecnología'
+                if 'GESTION' in texto_completo or 'GESTIÓN' in texto_completo: return 'Gestión'
+                if 'LOGISTICA' in texto_completo or 'LOGÍSTICA' in texto_completo or 'ABASTECIMIENTO' in texto_completo or 'MATERIAL' in texto_completo: return 'Logística'
+                if 'CALIDAD' in texto_completo: return 'Calidad'
+                
                 return 'Otra Falla/Gestión'
 
             def obtener_detalle_final(row):
@@ -205,7 +218,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
                 estado = row.get('Estado_Global', '')
                 categoria = row.get('Categoria_Macro', '')
                 
-                # Se le pega la etiqueta de "[MANTENIMIENTO]" o "[GESTION]" adelante para mayor precisión
+                # Le pega la etiqueta [MANTENIMIENTO], [LOGISTICA], etc. para que sea igual a tu reporte diario
                 if estado == 'Falla/Gestión':
                     if categoria != 'Otra Falla/Gestión' and categoria != 'Sin Área':
                         return f"[{categoria.upper()}] {ultimo_dato}"
@@ -381,10 +394,14 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             df_f = df_r_target[df_r_target['Estado_Global'] == 'Falla/Gestión'] if not df_r_target.empty else pd.DataFrame()
             
             if not df_f.empty and df_f['Tiempo (Min)'].sum() > 0:
-                top5 = df_f.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
+                excluir = ['BAÑO', 'BANO', 'REFRIGERIO', 'DESCANSO']
+                mask_puras = ~df_f['Detalle_Final'].str.upper().apply(lambda x: any(excl in x for excl in excluir))
+                df_f_puras = df_f[mask_puras]
+                
+                top5 = df_f_puras.groupby('Detalle_Final')['Tiempo (Min)'].sum().nlargest(5).reset_index()
                 
                 pdf.set_xy(10, 162); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(*theme_color); pdf.set_text_color(255)
-                # Damos más espacio al texto (100) y dejamos los porcentajes apretados
+                # Redistribuimos columnas para ganar espacio en el detalle de la falla (ahora 100 de ancho)
                 pdf.cell(100, 5, "FALLO", border=1, fill=True); pdf.cell(18, 5, "MIN", border=1, align='C', fill=True); pdf.cell(18, 5, "%", border=1, align='C', ln=True, fill=True)
                 pdf.set_font("Arial", '', 7.5); pdf.set_text_color(0); pdf.set_fill_color(255, 255, 255)
                 
@@ -562,6 +579,7 @@ st.divider()
 st.write("### 3. Preparar y Descargar Reportes")
 c_d, c_p, c_g = st.columns(3)
 
+# Lógica de carga On-Demand usando st.session_state
 with c_d:
     st.markdown("#### ⚙️ Disponibilidad (OEE)")
     if not df_m.empty:
