@@ -603,7 +603,8 @@ with c_d:
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_oee_est'] = crear_pdf_gestion_a_la_vista("Estampado", lab, df_m, df_r, df_t)
         if 'pdf_oee_est' in st.session_state:
-            st.download_button("📥 Bajar PDF Estampado", data=st.session_state['pdf_oee_est'], file_name="Disp_Estampado.pdf", mime="application/pdf")
+            # ACTUALIZADO: Nombre para Estampado
+            st.download_button("📥 Bajar PDF Estampado", data=st.session_state['pdf_oee_est'], file_name=f"FAMMA_Gestion_Vista_ESTAMPADO_{m_sel}_{a_sel}.pdf", mime="application/pdf")
             
         st.write("---")
         
@@ -611,7 +612,8 @@ with c_d:
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_oee_sol'] = crear_pdf_gestion_a_la_vista("Soldadura", lab, df_m, df_r, df_t)
         if 'pdf_oee_sol' in st.session_state:
-            st.download_button("📥 Bajar PDF Soldadura", data=st.session_state['pdf_oee_sol'], file_name="Disp_Soldadura.pdf", mime="application/pdf")
+            # ACTUALIZADO: Nombre para Soldadura
+            st.download_button("📥 Bajar PDF Soldadura", data=st.session_state['pdf_oee_sol'], file_name=f"FAMMA_Gestion_Vista_SOLDADURA_{m_sel}_{a_sel}.pdf", mime="application/pdf")
     else:
         st.error("No hay datos.")
 
@@ -622,7 +624,8 @@ with c_p:
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_prod_est'] = crear_pdf_informe_productivo("Estampado", lab, df_t, df_p, m_sel, a_sel, hs_rt)
         if 'pdf_prod_est' in st.session_state:
-            st.download_button("📥 Bajar Prod. Estampado", data=st.session_state['pdf_prod_est'], file_name="Prod_Estampado.pdf", mime="application/pdf")
+            # ACTUALIZADO: Nombre para Productivo Estampado
+            st.download_button("📥 Bajar Prod. Estampado", data=st.session_state['pdf_prod_est'], file_name=f"FAMMA_Productivo_Vista_ESTAMPADO_{m_sel}_{a_sel}.pdf", mime="application/pdf")
         
         st.write("---")
         
@@ -630,7 +633,8 @@ with c_p:
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_prod_sol'] = crear_pdf_informe_productivo("Soldadura", lab, df_t, df_p, m_sel, a_sel, hs_rt)
         if 'pdf_prod_sol' in st.session_state:
-            st.download_button("📥 Bajar Prod. Soldadura", data=st.session_state['pdf_prod_sol'], file_name="Prod_Soldadura.pdf", mime="application/pdf")
+            # ACTUALIZADO: Nombre para Productivo Soldadura
+            st.download_button("📥 Bajar Prod. Soldadura", data=st.session_state['pdf_prod_sol'], file_name=f"FAMMA_Productivo_Vista_SOLDADURA_{m_sel}_{a_sel}.pdf", mime="application/pdf")
     else:
         st.error("No hay datos.")
 
@@ -641,6 +645,7 @@ with c_g:
             with st.spinner("Generando documento maestro..."):
                 st.session_state['pdf_oee_glob'] = crear_pdf_gestion_a_la_vista("GLOBAL", lab, df_m, df_r, df_t)
         if 'pdf_oee_glob' in st.session_state:
-            st.download_button("📥 Bajar PDF Global", data=st.session_state['pdf_oee_glob'], file_name="Disp_Global_Famma.pdf", mime="application/pdf")
+            # ACTUALIZADO: Nombre para General / Global
+            st.download_button("📥 Bajar PDF Global", data=st.session_state['pdf_oee_glob'], file_name=f"FAMMA_General_Vista_GENERAL_{m_sel}_{a_sel}.pdf", mime="application/pdf")
     else:
         st.error("No hay datos.")
