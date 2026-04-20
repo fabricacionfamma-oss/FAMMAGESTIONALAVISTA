@@ -576,6 +576,14 @@ with col1:
 with col2: 
     a_sel = st.selectbox("Año", [2024, 2025, 2026], index=2)
 
+# DICCIONARIO PARA OBTENER EL NOMBRE DEL MES EN MAYÚSCULAS
+meses_nombres = {
+    1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL", 
+    5: "MAYO", 6: "JUNIO", 7: "JULIO", 8: "AGOSTO", 
+    9: "SEPTIEMBRE", 10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE"
+}
+mes_str = meses_nombres[m_sel]
+
 ini = pd.to_datetime(f"{a_sel}-{m_sel}-01")
 fin = pd.to_datetime(f"{a_sel}-{m_sel}-{calendar.monthrange(a_sel, m_sel)[1]}")
 lab = f"{m_sel}/{a_sel}"
@@ -603,8 +611,8 @@ with c_d:
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_oee_est'] = crear_pdf_gestion_a_la_vista("Estampado", lab, df_m, df_r, df_t)
         if 'pdf_oee_est' in st.session_state:
-            # ACTUALIZADO: Nombre para Estampado
-            st.download_button("📥 Bajar PDF Estampado", data=st.session_state['pdf_oee_est'], file_name=f"FAMMA_Gestion_Vista_ESTAMPADO_{m_sel}_{a_sel}.pdf", mime="application/pdf")
+            # Nombre modificado para Estampado con Mes en Texto
+            st.download_button("📥 Bajar PDF Estampado", data=st.session_state['pdf_oee_est'], file_name=f"FAMMA_Gestion_Vista_ESTAMPADO_{mes_str}_{a_sel}.pdf", mime="application/pdf")
             
         st.write("---")
         
@@ -612,8 +620,8 @@ with c_d:
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_oee_sol'] = crear_pdf_gestion_a_la_vista("Soldadura", lab, df_m, df_r, df_t)
         if 'pdf_oee_sol' in st.session_state:
-            # ACTUALIZADO: Nombre para Soldadura
-            st.download_button("📥 Bajar PDF Soldadura", data=st.session_state['pdf_oee_sol'], file_name=f"FAMMA_Gestion_Vista_SOLDADURA_{m_sel}_{a_sel}.pdf", mime="application/pdf")
+            # Nombre modificado para Soldadura con Mes en Texto
+            st.download_button("📥 Bajar PDF Soldadura", data=st.session_state['pdf_oee_sol'], file_name=f"FAMMA_Gestion_Vista_SOLDADURA_{mes_str}_{a_sel}.pdf", mime="application/pdf")
     else:
         st.error("No hay datos.")
 
@@ -624,8 +632,8 @@ with c_p:
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_prod_est'] = crear_pdf_informe_productivo("Estampado", lab, df_t, df_p, m_sel, a_sel, hs_rt)
         if 'pdf_prod_est' in st.session_state:
-            # ACTUALIZADO: Nombre para Productivo Estampado
-            st.download_button("📥 Bajar Prod. Estampado", data=st.session_state['pdf_prod_est'], file_name=f"FAMMA_Productivo_Vista_ESTAMPADO_{m_sel}_{a_sel}.pdf", mime="application/pdf")
+            # Nombre adaptado para Productivo Estampado
+            st.download_button("📥 Bajar Prod. Estampado", data=st.session_state['pdf_prod_est'], file_name=f"FAMMA_Productivo_Vista_ESTAMPADO_{mes_str}_{a_sel}.pdf", mime="application/pdf")
         
         st.write("---")
         
@@ -633,8 +641,8 @@ with c_p:
             with st.spinner("Generando documento..."):
                 st.session_state['pdf_prod_sol'] = crear_pdf_informe_productivo("Soldadura", lab, df_t, df_p, m_sel, a_sel, hs_rt)
         if 'pdf_prod_sol' in st.session_state:
-            # ACTUALIZADO: Nombre para Productivo Soldadura
-            st.download_button("📥 Bajar Prod. Soldadura", data=st.session_state['pdf_prod_sol'], file_name=f"FAMMA_Productivo_Vista_SOLDADURA_{m_sel}_{a_sel}.pdf", mime="application/pdf")
+            # Nombre adaptado para Productivo Soldadura
+            st.download_button("📥 Bajar Prod. Soldadura", data=st.session_state['pdf_prod_sol'], file_name=f"FAMMA_Productivo_Vista_SOLDADURA_{mes_str}_{a_sel}.pdf", mime="application/pdf")
     else:
         st.error("No hay datos.")
 
@@ -645,7 +653,7 @@ with c_g:
             with st.spinner("Generando documento maestro..."):
                 st.session_state['pdf_oee_glob'] = crear_pdf_gestion_a_la_vista("GLOBAL", lab, df_m, df_r, df_t)
         if 'pdf_oee_glob' in st.session_state:
-            # ACTUALIZADO: Nombre para General / Global
-            st.download_button("📥 Bajar PDF Global", data=st.session_state['pdf_oee_glob'], file_name=f"FAMMA_Vista_GENERAL_{m_sel}_{a_sel}.pdf", mime="application/pdf")
+            # Nombre modificado para General exacto como pediste
+            st.download_button("📥 Bajar PDF Global", data=st.session_state['pdf_oee_glob'], file_name=f"FAMMA_Vista_GENERAL_{mes_str}_{a_sel}.pdf", mime="application/pdf")
     else:
         st.error("No hay datos.")
