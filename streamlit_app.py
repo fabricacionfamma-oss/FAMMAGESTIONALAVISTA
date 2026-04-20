@@ -646,6 +646,6 @@ with c_g:
                 st.session_state['pdf_oee_glob'] = crear_pdf_gestion_a_la_vista("GLOBAL", lab, df_m, df_r, df_t)
         if 'pdf_oee_glob' in st.session_state:
             # ACTUALIZADO: Nombre para General / Global
-            st.download_button("📥 Bajar PDF Global", data=st.session_state['pdf_oee_glob'], file_name=f"FAMMA_General_Vista_GENERAL_{m_sel}_{a_sel}.pdf", mime="application/pdf")
+            st.download_button("📥 Bajar PDF Global", data=st.session_state['pdf_oee_glob'], file_name=f"FAMMA_Vista_GENERAL_{m_sel}_{a_sel}.pdf", mime="application/pdf")
     else:
         st.error("No hay datos.")
