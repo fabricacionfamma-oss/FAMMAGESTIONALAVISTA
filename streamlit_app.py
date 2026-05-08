@@ -13,23 +13,16 @@ from datetime import timedelta
 # ==========================================
 st.set_page_config(page_title="Reportes FAMMA", layout="wide", page_icon="📊")
 
-# DICCIONARIO OFICIAL FAMMA
 MAQUINAS_MAP = {
-    # --- ESTAMPADO ---
     "LINEA 1.2": "LINEA 1.2", "LINEA 1.4": "LINEA 1.4", "LINEA 1.5": "LINEA 1.5",
     "LINEA 2": "LINEA 2", "LINEA 3": "LINEA 3", "LINEA 4": "LINEA 4",
-    
-    # --- SOLDADURA ---
     "Cell 1 Famma": "CELDAS", "Cell 2 Famma": "CELDAS", "Cell 3 Famma": "CELDAS",
     "Cell 4 Famma": "CELDAS", "Cell 5 Famma": "CELDAS", "Cell 6 Famma": "CELDAS",
     "Cell 7 Famma": "CELDAS", "Cell 8 Famma": "CELDAS", "Cell 9 Famma": "CELDAS",
     "Cell 10 Famma": "CELDAS", "Cell 11 Famma": "CELDAS", "Cell 12 Famma": "CELDAS",
     "Cell 13 Famma": "CELDAS", "Cell 14 Famma": "CELDAS", "Cell 15A Famma": "CELDAS",
     "Cell 15B Famma": "CELDAS", "Cell 16 Famma": "CELDAS", "Cell 17 Famma": "CELDAS",
-    
-    "PRP 1": "PRP", "PRP 2": "PRP", "PRP 3": "PRP",
-    "PRP 4": "PRP", "PRP 5": "PRP", "PRP 6": "PRP",
-    
+    "PRP 1": "PRP", "PRP 2": "PRP", "PRP 3": "PRP", "PRP 4": "PRP", "PRP 5": "PRP", "PRP 6": "PRP",
     "MIG 1": "MIG", "MIG 2": "MIG",
 }
 
@@ -106,7 +99,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         q_pcs_m = f"SELECT c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name"
         df_pcs = conn.query(q_pcs_m).fillna(0)
 
-        df_metrics = pd.merge(df_oee, df_pcs, on='Máquina', how='outer').fillna(0) if not df_oee.empty and not df_pcs.empty else (df_oee if not df_oee.empty else df_pcs)
+        df_metrics = pd.merge(df_oee, df_pcs, on='Máquina', how='outer').fillna(0)
 
         q_top_m = f"SELECT c.Name as Máquina, COALESCE(pr.Code, 'S/C') as Pieza, SUM(COALESCE(p.Scrap, 0)) as Scrap, SUM(COALESCE(p.Rework, 0)) as RT FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId LEFT JOIN PRODUCT pr ON p.ProductId = pr.ProductId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name, pr.Code"
         df_piezas = conn.query(q_top_m).fillna(0)
@@ -116,7 +109,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         
         df_t_oee = conn.query(q_trend_oee_m).fillna(0)
         df_t_pcs = conn.query(q_trend_pcs_m).fillna(0)
-        df_trend = pd.merge(df_t_pcs, df_t_oee, on=['Month', 'Máquina'], how='outer').fillna(0) if not df_t_oee.empty and not df_t_pcs.empty else (df_t_pcs if not df_t_pcs.empty else df_t_oee)
+        df_trend = pd.merge(df_t_pcs, df_t_oee, on=['Month', 'Máquina'], how='outer').fillna(0)
 
         q_event = f"""
             SELECT c.Name as Máquina, e.Interval as [Tiempo (Min)], t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4], t5.Name as [Nivel Evento 5], t6.Name as [Nivel Evento 6]
@@ -128,7 +121,6 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         """
         df_raw = conn.query(q_event)
 
-        # Lógica de Parseo de Eventos (Inversa)
         if not df_raw.empty:
             def parse_event_tree(row):
                 niveles = [str(row.get(f'Nivel Evento {i}', '')).strip().upper() for i in range(1, 7)]
@@ -157,7 +149,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         st.error(f"Error SQL: {e}"); return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # ==========================================
-# 3. MOTOR: GESTIÓN A LA VISTA (CORREGIDO)
+# 3. MOTOR: GESTIÓN A LA VISTA
 # ==========================================
 def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw, df_trend):
     if area.upper() == "ESTAMPADO": theme_color = (15, 76, 129); grupos_area = GRUPOS_ESTAMPADO
@@ -187,7 +179,6 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
         pdf.set_fill_color(255, 255, 255); pdf.set_text_color(0); pdf.set_font("Arial", '', 10)
         pdf.cell(40, 6, label_reporte, 1, 0, 'C', True); pdf.cell(197, 6, "EMPRESA: FAMMA", 1, 0, 'C', True); pdf.cell(40, 6, "DISPONIBILIDAD", 1, 1, 'C', True)
 
-        # Calculo de KPI Promedio Ponderado
         tp = df_m_t['T_Planificado'].sum(); to = df_m_t['T_Operativo'].sum()
         v_oee = (df_m_t['OEE_Num'] * df_m_t['T_Planificado']).sum() / tp if tp > 0 else 0
         v_disp = (df_m_t['Disp_Num'] * df_m_t['T_Planificado']).sum() / tp if tp > 0 else 0
@@ -195,18 +186,16 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
         v_cal = (df_m_t['Cal_Num'] * df_m_t['T_Operativo']).sum() / to if to > 0 else 0
         if v_oee > 1.5: v_oee /= 100; v_disp /= 100; v_perf /= 100; v_cal /= 100
 
-        # KPI CONFIG (OBJETIVOS SOLICITADOS)
         kpis = {"OEE": (v_oee, 0.75), "PERFORMANCE": (v_perf, 0.90), "DISPONIBILIDAD": (v_disp, 0.88), "CALIDAD": (v_cal, 0.95)}
-        
         for i, (lbl, (v, obj)) in enumerate(kpis.items()):
-            bg = (46, 204, 113) if v >= obj else (231, 76, 60) # Verde si cumple, Rojo si no
+            bg = (46, 204, 113) if v >= obj else (231, 76, 60)
             pdf.draw_kpi_panel(x := 10 + (i * 68.5), 25, 65, 20, bg_color=bg)
             pdf.set_xy(x, 27); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(255); pdf.cell(65, 6, lbl, 0, 1, 'L')
             pdf.set_xy(x, 33); pdf.set_font("Arial", 'B', 20); pdf.cell(65, 10, f"{v*100:.1f}%", 0, 0, 'C')
         pdf.set_text_color(0)
 
-        # Gráficos de Tendencia con Línea de Objetivo
-        def add_trend(df_in, col, title, x_pos, y_pos, target_val, large=False):
+        # Gráficos con ACUMULADO ANUAL (YTD)
+        def add_trend_with_ytd(df_in, col, title, x_pos, y_pos, target_val, large=False):
             if df_in.empty: return
             res = []
             for m, grp in df_in.groupby('Month'):
@@ -217,23 +206,36 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
                 else: val = (grp['Cal_Num'] * grp['T_Operativo']).sum() / to_m if to_m > 0 else 0
                 res.append({'M': int(m), 'V': val/100 if val > 1.5 else val})
             
-            df_g = pd.DataFrame(res); df_g['Mes'] = df_g['M'].map({1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'})
-            df_g['C'] = df_g['V'].apply(lambda v: '#2ECC71' if v >= target_val else '#E74C3C')
+            df_g = pd.DataFrame(res)
+            # Calcular YTD Real
+            tp_ytd, to_ytd = df_in['T_Planificado'].sum(), df_in['T_Operativo'].sum()
+            if col == 'OEE': ytd_v = (df_in['OEE_Num'] * df_in['T_Planificado']).sum() / tp_ytd if tp_ytd > 0 else 0
+            elif col == 'PERFORMANCE': ytd_v = (df_in['Perf_Num'] * df_in['T_Operativo']).sum() / to_ytd if to_ytd > 0 else 0
+            elif col == 'DISPONIBILIDAD': ytd_v = (df_in['Disp_Num'] * df_in['T_Planificado']).sum() / tp_ytd if tp_ytd > 0 else 0
+            else: ytd_v = (df_in['Cal_Num'] * df_in['T_Operativo']).sum() / to_ytd if to_ytd > 0 else 0
+            if ytd_v > 1.5: ytd_v /= 100
+
+            df_g['Mes'] = df_g['M'].map({1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'})
+            ytd_row = pd.DataFrame([{'M': 99, 'V': ytd_v, 'Mes': 'Acum.'}])
+            df_plot = pd.concat([df_g, ytd_row], ignore_index=True)
+            df_plot['C'] = df_plot['V'].apply(lambda v: '#2ECC71' if v >= target_val else '#E74C3C')
             
-            fig = go.Figure(go.Bar(x=df_g['Mes'], y=df_g['V'], marker_color=df_g['C'], text=df_g['V'], texttemplate='<b>%{text:.1%}</b>', textposition='outside'))
+            fig = go.Figure(go.Bar(x=df_plot['Mes'], y=df_plot['V'], marker_color=df_plot['C'], text=df_plot['V'], texttemplate='<b>%{text:.1%}</b>', textposition='outside'))
             fig.add_hline(y=target_val, line_dash="dash", line_color="#2ECC71", line_width=2, annotation_text=f"<b>Obj: {target_val*100:.0f}%</b>")
-            fig.update_layout(title=dict(text=f"<b>{title}</b>", font=dict(size=13)), margin=dict(t=35, b=20, l=10, r=10), yaxis=dict(visible=False, range=[0, max(1.1, df_g['V'].max()*1.2)]))
+            if len(df_plot) > 1: fig.add_vline(x=len(df_plot)-1.5, line_dash="dot", line_color="black")
+            
+            fig.update_layout(title=dict(text=f"<b>{title}</b>", font=dict(size=13)), margin=dict(t=35, b=20, l=10, r=10), yaxis=dict(visible=False, range=[0, max(1.1, df_plot['V'].max()*1.3)]))
             img = save_chart(fig, 600, 300 if large else 220); pdf.image(img, x_pos+2, y_pos+2, 134 if large else 132); os.remove(img)
 
-        # Posicionamiento de paneles y gráficos
+        # Paneles de gráficos
         if area.upper() == "GLOBAL":
-            pdf.draw_panel(10, 48, 136, 75); pdf.draw_panel(149, 48, 138, 75); add_trend(df_t_t, 'OEE', 'OEE (%)', 10, 48, 0.75, True); add_trend(df_t_t, 'PERFORMANCE', 'PERFORMANCE (%)', 150, 48, 0.90, True)
-            pdf.draw_panel(10, 126, 136, 75); pdf.draw_panel(149, 126, 138, 75); add_trend(df_t_t, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%)', 10, 126, 0.88, True); add_trend(df_t_t, 'CALIDAD', 'CALIDAD (%)', 150, 126, 0.95, True)
+            pdf.draw_panel(10, 48, 136, 75); pdf.draw_panel(149, 48, 138, 75); add_trend_with_ytd(df_t_t, 'OEE', 'OEE (%)', 10, 48, 0.75, True); add_trend_with_ytd(df_t_t, 'PERFORMANCE', 'PERFORMANCE (%)', 150, 48, 0.90, True)
+            pdf.draw_panel(10, 126, 136, 75); pdf.draw_panel(149, 126, 138, 75); add_trend_with_ytd(df_t_t, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%)', 10, 126, 0.88, True); add_trend_with_ytd(df_t_t, 'CALIDAD', 'CALIDAD (%)', 150, 126, 0.95, True)
         else:
-            pdf.draw_panel(10, 48, 136, 52); pdf.draw_panel(149, 48, 138, 52); add_trend(df_t_t, 'OEE', 'OEE (%)', 10, 48, 0.75); add_trend(df_t_t, 'PERFORMANCE', 'PERFORMANCE (%)', 150, 48, 0.90)
-            pdf.draw_panel(10, 102, 136, 52); pdf.draw_panel(149, 102, 138, 52); add_trend(df_t_t, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%)', 10, 102, 0.88); add_trend(df_t_t, 'CALIDAD', 'CALIDAD (%)', 150, 102, 0.95)
+            pdf.draw_panel(10, 48, 136, 52); pdf.draw_panel(149, 48, 138, 52); add_trend_with_ytd(df_t_t, 'OEE', 'OEE (%)', 10, 48, 0.75); add_trend_with_ytd(df_t_t, 'PERFORMANCE', 'PERFORMANCE (%)', 150, 48, 0.90)
+            pdf.draw_panel(10, 102, 136, 52); pdf.draw_panel(149, 102, 138, 52); add_trend_with_ytd(df_t_t, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%)', 10, 102, 0.88); add_trend_with_ytd(df_t_t, 'CALIDAD', 'CALIDAD (%)', 150, 102, 0.95)
             
-            # Top Fallos
+            # Top Fallos y Barra Detallada
             pdf.draw_panel(10, 156, 136, 45); pdf.draw_panel(149, 156, 138, 45)
             df_f = df_r_t[df_r_t['Estado_Global'] == 'Falla/Gestión']
             if not df_f.empty:
@@ -244,9 +246,16 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
                 for _, r in top5.iterrows():
                     pdf.set_x(10); pdf.cell(100, 6, clean_text(r['Detalle_Final'])[:65], 1); pdf.cell(18, 6, f"{r['Tiempo (Min)']:.0f}", 1, 0, 'C'); pdf.cell(18, 6, f"{(r['Tiempo (Min)']/tt)*100:.1f}%", 1, 1, 'C')
                 
+                # BARRA 100% CON LEYENDA DINÁMICA (NOMBRE + HS + %)
                 df_macro = df_f.groupby('Categoria_Macro')['Tiempo (Min)'].sum().reset_index()
-                fig_s = px.bar(df_macro, x='Tiempo (Min)', y=['Pérdidas']*len(df_macro), color='Categoria_Macro', orientation='h', color_discrete_sequence=px.colors.qualitative.Safe)
-                fig_s.update_layout(showlegend=True, legend=dict(orientation="h", y=-0.2), margin=dict(t=10, b=10), xaxis=dict(visible=False), yaxis=dict(visible=False))
+                df_macro['%'] = df_macro['Tiempo (Min)'] / tt
+                df_macro['Label'] = df_macro.apply(lambda r: f"{r['Categoria_Macro']} ({r['Tiempo (Min)']/60:.1f} hs | {r['%']:.1%})", axis=1)
+                
+                fig_s = px.bar(df_macro, x='%', y=['Pérdidas']*len(df_macro), color='Label', orientation='h', color_discrete_sequence=px.colors.qualitative.Safe)
+                fig_s.update_layout(barmode='stack', showlegend=True, 
+                                    legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5, font=dict(size=9), title=""), 
+                                    margin=dict(t=25, b=20, l=10, r=10), xaxis=dict(visible=False, range=[0, 1]), yaxis=dict(visible=False))
+                fig_s.update_traces(marker_line_color='black', marker_line_width=1)
                 imgs = save_chart(fig_s, 600, 180); pdf.image(imgs, 151, 158, 134); os.remove(imgs)
 
     return pdf.output(dest='S').encode('latin-1')
@@ -291,7 +300,6 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         pdf.draw_panel(10, 85, 135, 60); add_prod_chart('% Scrap', '% SCRAP', 86, target_scrap)
         pdf.draw_panel(10, 148, 135, 60); add_prod_chart('% RT', '% RE-TRABAJO', 149, target_rt)
 
-        # Top Scrap/RT por Pieza
         if not df_p_t.empty:
             pdf.draw_panel(150, 22, 135, 83); pdf.draw_panel(150, 108, 135, 83)
             ts = df_p_t.groupby('Pieza')['Scrap'].sum().nlargest(5).reset_index().sort_values('Scrap')
