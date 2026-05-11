@@ -93,12 +93,12 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         ini_str = fecha_ini.strftime('%Y-%m-%d 00:00:00')
         fin_str = fecha_fin.strftime('%Y-%m-%d 23:59:59')
         
+        # TABLAS ORIGINALES (Se mantienen para Prod y cálculos secundarios)
         q_oee_m = f"SELECT c.Name as Máquina, p.Performance as Perf_Num, p.Availability as Disp_Num, p.Quality as Cal_Num, p.Oee as OEE_Num, COALESCE(p.ProductiveTime, 0) as T_Operativo, (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month = {mes}"
         df_oee = conn.query(q_oee_m).fillna(0)
 
         q_pcs_m = f"SELECT c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name"
         df_pcs = conn.query(q_pcs_m).fillna(0)
-
         df_metrics = pd.merge(df_oee, df_pcs, on='Máquina', how='outer').fillna(0)
 
         q_top_m = f"SELECT c.Name as Máquina, COALESCE(pr.Code, 'S/C') as Pieza, SUM(COALESCE(p.Scrap, 0)) as Scrap, SUM(COALESCE(p.Rework, 0)) as RT FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId LEFT JOIN PRODUCT pr ON p.ProductId = pr.ProductId WHERE p.Year = {anio} AND p.Month = {mes} GROUP BY c.Name, pr.Code"
@@ -106,7 +106,6 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
 
         q_trend_oee_m = f"SELECT p.Month, c.Name as Máquina, p.Performance as Perf_Num, p.Availability as Disp_Num, p.Quality as Cal_Num, p.Oee as OEE_Num, COALESCE(p.ProductiveTime, 0) as T_Operativo, (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month <= {mes}"
         q_trend_pcs_m = f"SELECT p.Month, c.Name as Máquina, SUM(COALESCE(p.Good, 0)) as Buenas, SUM(COALESCE(p.Rework, 0)) as Retrabajo, SUM(COALESCE(p.Scrap, 0)) as Observadas, SUM(COALESCE(p.Good, 0) + COALESCE(p.Rework, 0) + COALESCE(p.Scrap, 0)) as Totales FROM PROD_M_01 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month <= {mes} GROUP BY p.Month, c.Name"
-        
         df_t_oee = conn.query(q_trend_oee_m).fillna(0)
         df_t_pcs = conn.query(q_trend_pcs_m).fillna(0)
         df_trend = pd.merge(df_t_pcs, df_t_oee, on=['Month', 'Máquina'], how='outer').fillna(0)
@@ -144,14 +143,33 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
 
             df_raw[['Estado_Global', 'Categoria_Macro', 'Detalle_Final']] = df_raw.apply(lambda r: pd.Series(parse_event_tree(r)), axis=1)
 
-        return df_metrics, df_raw, df_trend, df_piezas
+        # =========================================================================
+        # NUEVAS CONSULTAS EXACTAS DESDE LAS TABLAS M_04, M_05, M_06 
+        # (Para extraer las Performance puras sin promediar)
+        # =========================================================================
+        q_m_04 = f"SELECT Line as Planta_Linea, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_04 WHERE Year = {anio} AND Month = {mes}"
+        q_m_05 = f"SELECT Factory as Planta, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_05 WHERE Year = {anio} AND Month = {mes}"
+        q_m_06 = f"SELECT Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_06 WHERE Year = {anio} AND Month = {mes}"
+        
+        q_t_04 = f"SELECT Month, Line as Planta_Linea, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_04 WHERE Year = {anio} AND Month <= {mes}"
+        q_t_05 = f"SELECT Month, Factory as Planta, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_05 WHERE Year = {anio} AND Month <= {mes}"
+        q_t_06 = f"SELECT Month, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_06 WHERE Year = {anio} AND Month <= {mes}"
+
+        df_m_04 = conn.query(q_m_04).fillna(0)
+        df_m_05 = conn.query(q_m_05).fillna(0)
+        df_m_06 = conn.query(q_m_06).fillna(0)
+        df_t_04 = conn.query(q_t_04).fillna(0)
+        df_t_05 = conn.query(q_t_05).fillna(0)
+        df_t_06 = conn.query(q_t_06).fillna(0)
+
+        return df_metrics, df_raw, df_trend, df_piezas, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06
     except Exception as e:
-        st.error(f"Error SQL: {e}"); return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        st.error(f"Error SQL: {e}"); return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # ==========================================
 # 3. MOTOR: GESTIÓN A LA VISTA
 # ==========================================
-def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw, df_trend):
+def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw, df_trend, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06):
     if area.upper() == "ESTAMPADO": theme_color = (15, 76, 129); grupos_area = GRUPOS_ESTAMPADO
     elif area.upper() == "SOLDADURA": theme_color = (211, 84, 0); grupos_area = GRUPOS_SOLDADURA
     else: theme_color = (40, 40, 40); grupos_area = GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA
@@ -179,12 +197,37 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
         pdf.set_fill_color(255, 255, 255); pdf.set_text_color(0); pdf.set_font("Arial", '', 10)
         pdf.cell(40, 6, label_reporte, 1, 0, 'C', True); pdf.cell(197, 6, "EMPRESA: FAMMA", 1, 0, 'C', True); pdf.cell(40, 6, "DISPONIBILIDAD", 1, 1, 'C', True)
 
+        # Lógica original como base (Mantiene Acumulado YTD y máquinas agrupadas que no existan en PROD_M_04)
         tp = df_m_t['T_Planificado'].sum(); to = df_m_t['T_Operativo'].sum()
         v_oee = (df_m_t['OEE_Num'] * df_m_t['T_Planificado']).sum() / tp if tp > 0 else 0
         v_disp = (df_m_t['Disp_Num'] * df_m_t['T_Planificado']).sum() / tp if tp > 0 else 0
         v_perf = (df_m_t['Perf_Num'] * df_m_t['T_Operativo']).sum() / to if to > 0 else 0
         v_cal = (df_m_t['Cal_Num'] * df_m_t['T_Operativo']).sum() / to if to > 0 else 0
-        if v_oee > 1.5: v_oee /= 100; v_disp /= 100; v_perf /= 100; v_cal /= 100
+
+        # === INYECCIÓN DEL DATO EXACTO (Reemplazo del promedio ponderado donde aplique) ===
+        override = False
+        if target == 'GENERAL':
+            if area.upper() == "GLOBAL" and not df_m_06.empty:
+                v_oee = df_m_06['OEE_Num'].iloc[0]; v_disp = df_m_06['Disp_Num'].iloc[0]; v_perf = df_m_06['Perf_Num'].iloc[0]; v_cal = df_m_06['Cal_Num'].iloc[0]
+                override = True
+            else:
+                planta_code = "ESTAMPADO" if area.upper() == "ESTAMPADO" else "SOLDADURA"
+                df_p_val = df_m_05[df_m_05['Planta'] == planta_code]
+                if not df_p_val.empty:
+                    v_oee = df_p_val['OEE_Num'].iloc[0]; v_disp = df_p_val['Disp_Num'].iloc[0]; v_perf = df_p_val['Perf_Num'].iloc[0]; v_cal = df_p_val['Cal_Num'].iloc[0]
+                    override = True
+        else:
+            df_l_val = df_m_04[df_m_04['Planta_Linea'] == target]
+            if not df_l_val.empty:
+                v_oee = df_l_val['OEE_Num'].iloc[0]; v_disp = df_l_val['Disp_Num'].iloc[0]; v_perf = df_l_val['Perf_Num'].iloc[0]; v_cal = df_l_val['Cal_Num'].iloc[0]
+                override = True
+                
+        # Acomodamos el formato matemático para que el widget mantenga el diseño original intacto
+        if override:
+            v_oee /= 100; v_disp /= 100; v_perf /= 100; v_cal /= 100
+        else:
+            if v_oee > 1.5: v_oee /= 100; v_disp /= 100; v_perf /= 100; v_cal /= 100
+        # =================================================================================
 
         kpis = {"OEE": (v_oee, 0.75), "PERFORMANCE": (v_perf, 0.90), "DISPONIBILIDAD": (v_disp, 0.88), "CALIDAD": (v_cal, 0.95)}
         for i, (lbl, (v, obj)) in enumerate(kpis.items()):
@@ -194,20 +237,44 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             pdf.set_xy(x, 33); pdf.set_font("Arial", 'B', 20); pdf.cell(65, 10, f"{v*100:.1f}%", 0, 0, 'C')
         pdf.set_text_color(0)
 
-        # Gráficos con ACUMULADO ANUAL (YTD)
+        # Gráficos con ACUMULADO ANUAL (YTD) - Ahora utiliza las barras puras mensuales
         def add_trend_with_ytd(df_in, col, title, x_pos, y_pos, target_val, large=False):
-            if df_in.empty: return
+            if df_in.empty and target != 'GENERAL': return
             res = []
-            for m, grp in df_in.groupby('Month'):
-                tp_m, to_m = grp['T_Planificado'].sum(), grp['T_Operativo'].sum()
-                if col == 'OEE': val = (grp['OEE_Num'] * grp['T_Planificado']).sum() / tp_m if tp_m > 0 else 0
-                elif col == 'PERFORMANCE': val = (grp['Perf_Num'] * grp['T_Operativo']).sum() / to_m if to_m > 0 else 0
-                elif col == 'DISPONIBILIDAD': val = (grp['Disp_Num'] * grp['T_Planificado']).sum() / tp_m if tp_m > 0 else 0
-                else: val = (grp['Cal_Num'] * grp['T_Operativo']).sum() / to_m if to_m > 0 else 0
-                res.append({'M': int(m), 'V': val/100 if val > 1.5 else val})
+            
+            # Determinamos si contamos con la tabla exacta para esta vuelta
+            override_tr = False
+            df_exact = pd.DataFrame()
+            
+            if target == 'GENERAL':
+                if area.upper() == "GLOBAL" and not df_t_06.empty: df_exact = df_t_06.copy(); override_tr = True
+                else:
+                    planta_code = "ESTAMPADO" if area.upper() == "ESTAMPADO" else "SOLDADURA"
+                    df_exact = df_t_05[df_t_05['Planta'] == planta_code].copy()
+                    if not df_exact.empty: override_tr = True
+            else:
+                df_exact = df_t_04[df_t_04['Planta_Linea'] == target].copy()
+                if not df_exact.empty: override_tr = True
+            
+            if override_tr:
+                for m, grp in df_exact.groupby('Month'):
+                    if col == 'OEE': val = grp['OEE_Num'].iloc[0]
+                    elif col == 'PERFORMANCE': val = grp['Perf_Num'].iloc[0]
+                    elif col == 'DISPONIBILIDAD': val = grp['Disp_Num'].iloc[0]
+                    else: val = grp['Cal_Num'].iloc[0]
+                    res.append({'M': int(m), 'V': val/100 if val > 1.5 else val})
+            else:
+                for m, grp in df_in.groupby('Month'):
+                    tp_m, to_m = grp['T_Planificado'].sum(), grp['T_Operativo'].sum()
+                    if col == 'OEE': val = (grp['OEE_Num'] * grp['T_Planificado']).sum() / tp_m if tp_m > 0 else 0
+                    elif col == 'PERFORMANCE': val = (grp['Perf_Num'] * grp['T_Operativo']).sum() / to_m if to_m > 0 else 0
+                    elif col == 'DISPONIBILIDAD': val = (grp['Disp_Num'] * grp['T_Planificado']).sum() / tp_m if tp_m > 0 else 0
+                    else: val = (grp['Cal_Num'] * grp['T_Operativo']).sum() / to_m if to_m > 0 else 0
+                    res.append({'M': int(m), 'V': val/100 if val > 1.5 else val})
             
             df_g = pd.DataFrame(res)
-            # Calcular YTD Real
+            
+            # Calcular YTD Real (Se mantiene la lógica ponderada original para el acumulado anual)
             tp_ytd, to_ytd = df_in['T_Planificado'].sum(), df_in['T_Operativo'].sum()
             if col == 'OEE': ytd_v = (df_in['OEE_Num'] * df_in['T_Planificado']).sum() / tp_ytd if tp_ytd > 0 else 0
             elif col == 'PERFORMANCE': ytd_v = (df_in['Perf_Num'] * df_in['T_Operativo']).sum() / to_ytd if to_ytd > 0 else 0
@@ -246,7 +313,6 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
                 for _, r in top5.iterrows():
                     pdf.set_x(10); pdf.cell(100, 6, clean_text(r['Detalle_Final'])[:65], 1); pdf.cell(18, 6, f"{r['Tiempo (Min)']:.0f}", 1, 0, 'C'); pdf.cell(18, 6, f"{(r['Tiempo (Min)']/tt)*100:.1f}%", 1, 1, 'C')
                 
-                # BARRA 100% CON LEYENDA DINÁMICA (NOMBRE + HS + %)
                 df_macro = df_f.groupby('Categoria_Macro')['Tiempo (Min)'].sum().reset_index()
                 df_macro['%'] = df_macro['Tiempo (Min)'] / tt
                 df_macro['Label'] = df_macro.apply(lambda r: f"{r['Categoria_Macro']} ({r['Tiempo (Min)']/60:.1f} hs | {r['%']:.1%})", axis=1)
@@ -330,7 +396,8 @@ mes_str = {1:"ENERO",2:"FEBRERO",3:"MARZO",4:"ABRIL",5:"MAYO",6:"JUNIO",7:"JULIO
 ini = pd.to_datetime(f"{a_sel}-{m_sel}-01"); fin = ini + pd.offsets.MonthEnd(0)
 
 with st.spinner("Cargando datos..."):
-    df_m, df_r, df_t, df_p = fetch_data_from_db(ini, fin, m_sel, a_sel)
+    # Recepción de las 6 nuevas variables de datos pre-calculados
+    df_m, df_r, df_t, df_p, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06 = fetch_data_from_db(ini, fin, m_sel, a_sel)
 
 st.write("### 2. Datos Manuales")
 hs_rt = st.number_input("Horas de RT (Estampado):", 0.0, 1000.0, 0.0)
@@ -341,9 +408,9 @@ cd, cp, cg = st.columns(3)
 
 with cd:
     st.subheader("⚙️ OEE")
-    if st.button("Preparar OEE Estampado"): st.session_state['oee_e'] = crear_pdf_gestion_a_la_vista("Estampado", f"{m_sel}/{a_sel}", df_m, df_r, df_t)
+    if st.button("Preparar OEE Estampado"): st.session_state['oee_e'] = crear_pdf_gestion_a_la_vista("Estampado", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06)
     if 'oee_e' in st.session_state: st.download_button("📥 Bajar Estampado", st.session_state['oee_e'], f"FAMMA_OEE_ESTAMPADO_{mes_str}.pdf")
-    if st.button("Preparar OEE Soldadura"): st.session_state['oee_s'] = crear_pdf_gestion_a_la_vista("Soldadura", f"{m_sel}/{a_sel}", df_m, df_r, df_t)
+    if st.button("Preparar OEE Soldadura"): st.session_state['oee_s'] = crear_pdf_gestion_a_la_vista("Soldadura", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06)
     if 'oee_s' in st.session_state: st.download_button("📥 Bajar Soldadura", st.session_state['oee_s'], f"FAMMA_OEE_SOLDADURA_{mes_str}.pdf")
 
 with cp:
@@ -355,5 +422,5 @@ with cp:
 
 with cg:
     st.subheader("🌎 Global")
-    if st.button("Preparar Reporte Global"): st.session_state['glob'] = crear_pdf_gestion_a_la_vista("GLOBAL", f"{m_sel}/{a_sel}", df_m, df_r, df_t)
+    if st.button("Preparar Reporte Global"): st.session_state['glob'] = crear_pdf_gestion_a_la_vista("GLOBAL", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06)
     if 'glob' in st.session_state: st.download_button("📥 Bajar Global", st.session_state['glob'], f"FAMMA_GENERAL_{mes_str}.pdf")
