@@ -152,7 +152,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         
         df_oficial = pd.concat([conn.query(q_m06).fillna(0), conn.query(q_m05).fillna(0), conn.query(q_m04).fillna(0)], ignore_index=True)
         
-        # Históricos para tendencias (Mantenemos la estructura original)
+        # Históricos para tendencias
         q_t_04 = f"SELECT Month, Line as Planta_Linea, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_04 WHERE Year = {anio} AND Month <= {mes}"
         q_t_05 = f"SELECT Month, Factory as Planta, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_05 WHERE Year = {anio} AND Month <= {mes}"
         q_t_06 = f"SELECT Month, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_06 WHERE Year = {anio} AND Month <= {mes}"
@@ -297,7 +297,7 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             fig.update_layout(title=dict(text=f"<b>{title}</b>", font=dict(size=13)), margin=dict(t=35, b=20, l=10, r=10), yaxis=dict(visible=False, range=[0, max(1.1, df_plot['V'].max()*1.3)]))
             img = save_chart(fig, 600, 300 if large else 220); pdf.image(img, x_pos+2, y_pos+2, 134 if large else 132); os.remove(img)
 
-        # Paneles de gráficos (Se inyectan los off_vals para sincronizar los gráficos)
+        # Paneles de gráficos
         if area.upper() == "GLOBAL":
             pdf.draw_panel(10, 48, 136, 75); pdf.draw_panel(149, 48, 138, 75); add_trend_with_ytd(df_t_t, 'OEE', 'OEE (%)', 10, 48, 0.75, True, v_oee); add_trend_with_ytd(df_t_t, 'PERFORMANCE', 'PERFORMANCE (%)', 150, 48, 0.90, True, v_perf)
             pdf.draw_panel(10, 126, 136, 75); pdf.draw_panel(149, 126, 138, 75); add_trend_with_ytd(df_t_t, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%)', 10, 126, 0.88, True, v_disp); add_trend_with_ytd(df_t_t, 'CALIDAD', 'CALIDAD (%)', 150, 126, 0.95, True, v_cal)
@@ -482,18 +482,18 @@ cd, cp, cg = st.columns(3)
 with cd:
     st.subheader("⚙️ OEE")
     if st.button("Preparar OEE Estampado"): st.session_state['oee_e'] = crear_pdf_gestion_a_la_vista("Estampado", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_oficial_editado, df_t_04, df_t_05, df_t_06, m_sel)
-    if 'oee_e' in st.session_state: st.download_button("📥 Bajar Estampado", st.session_state['oee_e'], "FAMMA_OEE_ESTAMPADO.pdf")
+    if 'oee_e' in st.session_state: st.download_button("📥 Bajar Estampado", st.session_state['oee_e'], "FAMMA_Gestion_Vista_ESTAMPADO.pdf")
     if st.button("Preparar OEE Soldadura"): st.session_state['oee_s'] = crear_pdf_gestion_a_la_vista("Soldadura", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_oficial_editado, df_t_04, df_t_05, df_t_06, m_sel)
-    if 'oee_s' in st.session_state: st.download_button("📥 Bajar Soldadura", st.session_state['oee_s'], "FAMMA_OEE_SOLDADURA.pdf")
+    if 'oee_s' in st.session_state: st.download_button("📥 Bajar Soldadura", st.session_state['oee_s'], "FAMMA_Gestion_Vista_SOLDADURA.pdf")
 
 with cp:
     st.subheader("🏭 Producción")
     if st.button("Preparar Prod Estampado"): st.session_state['pr_e'] = crear_pdf_informe_productivo("Estampado", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt)
-    if 'pr_e' in st.session_state: st.download_button("📥 Bajar Prod Estampado", st.session_state['pr_e'], "FAMMA_PROD_ESTAMPADO.pdf")
+    if 'pr_e' in st.session_state: st.download_button("📥 Bajar Prod Estampado", st.session_state['pr_e'], "FAMMA_Productivo_Vista_ESTAMPADO.pdf")
     if st.button("Preparar Prod Soldadura"): st.session_state['pr_s'] = crear_pdf_informe_productivo("Soldadura", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt)
-    if 'pr_s' in st.session_state: st.download_button("📥 Bajar Prod Soldadura", st.session_state['pr_s'], "FAMMA_PROD_SOLDADURA.pdf")
+    if 'pr_s' in st.session_state: st.download_button("📥 Bajar Prod Soldadura", st.session_state['pr_s'], "FAMMA_Productivo_Vista_SOLDADURA.pdf")
 
 with cg:
     st.subheader("🌎 Global")
     if st.button("Preparar Reporte Global"): st.session_state['glob'] = crear_pdf_gestion_a_la_vista("GLOBAL", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_oficial_editado, df_t_04, df_t_05, df_t_06, m_sel)
-    if 'glob' in st.session_state: st.download_button("📥 Bajar Global", st.session_state['glob'], "FAMMA_GENERAL.pdf")
+    if 'glob' in st.session_state: st.download_button("📥 Bajar Global", st.session_state['glob'], "FAMMA_Vista_GENERAL.pdf")
