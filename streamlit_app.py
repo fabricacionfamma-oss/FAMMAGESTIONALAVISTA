@@ -93,7 +93,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
         ini_str = fecha_ini.strftime('%Y-%m-%d 00:00:00')
         fin_str = fecha_fin.strftime('%Y-%m-%d 23:59:59')
         
-        # TABLAS ORIGINALES (Se mantienen para Prod y cálculos secundarios)
+        # TABLAS ORIGINALES
         q_oee_m = f"SELECT c.Name as Máquina, p.Performance as Perf_Num, p.Availability as Disp_Num, p.Quality as Cal_Num, p.Oee as OEE_Num, COALESCE(p.ProductiveTime, 0) as T_Operativo, (COALESCE(p.ProductiveTime, 0) + COALESCE(p.DownTime, 0)) as T_Planificado FROM PROD_M_03 p JOIN CELL c ON p.CellId = c.CellId WHERE p.Year = {anio} AND p.Month = {mes}"
         df_oee = conn.query(q_oee_m).fillna(0)
 
@@ -144,32 +144,31 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
             df_raw[['Estado_Global', 'Categoria_Macro', 'Detalle_Final']] = df_raw.apply(lambda r: pd.Series(parse_event_tree(r)), axis=1)
 
         # =========================================================================
-        # NUEVAS CONSULTAS EXACTAS DESDE LAS TABLAS M_04, M_05, M_06 
-        # (Para extraer las Performance puras sin promediar)
+        # TABLA UNIFICADA OFICIAL PARA EL EDITOR DE STREAMLIT (Nivel, Grupo)
         # =========================================================================
-        q_m_04 = f"SELECT Line as Planta_Linea, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_04 WHERE Year = {anio} AND Month = {mes}"
-        q_m_05 = f"SELECT Factory as Planta, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_05 WHERE Year = {anio} AND Month = {mes}"
-        q_m_06 = f"SELECT Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_06 WHERE Year = {anio} AND Month = {mes}"
+        q_m06 = f"SELECT 'GLOBAL' as Nivel, 'GLOBAL' as Grupo, Performance, Availability as Disp, Quality as Cal, Oee FROM PROD_M_06 WHERE Year = {anio} AND Month = {mes}"
+        q_m05 = f"SELECT 'FABRICA' as Nivel, UPPER(Factory) as Grupo, Performance, Availability as Disp, Quality as Cal, Oee FROM PROD_M_05 WHERE Year = {anio} AND Month = {mes}"
+        q_m04 = f"SELECT 'LINEA' as Nivel, UPPER(Line) as Grupo, Performance, Availability as Disp, Quality as Cal, Oee FROM PROD_M_04 WHERE Year = {anio} AND Month = {mes}"
         
+        df_oficial = pd.concat([conn.query(q_m06).fillna(0), conn.query(q_m05).fillna(0), conn.query(q_m04).fillna(0)], ignore_index=True)
+        
+        # Históricos para tendencias (Mantenemos la estructura original)
         q_t_04 = f"SELECT Month, Line as Planta_Linea, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_04 WHERE Year = {anio} AND Month <= {mes}"
         q_t_05 = f"SELECT Month, Factory as Planta, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_05 WHERE Year = {anio} AND Month <= {mes}"
         q_t_06 = f"SELECT Month, Oee as OEE_Num, Performance as Perf_Num, Availability as Disp_Num, Quality as Cal_Num FROM PROD_M_06 WHERE Year = {anio} AND Month <= {mes}"
 
-        df_m_04 = conn.query(q_m_04).fillna(0)
-        df_m_05 = conn.query(q_m_05).fillna(0)
-        df_m_06 = conn.query(q_m_06).fillna(0)
         df_t_04 = conn.query(q_t_04).fillna(0)
         df_t_05 = conn.query(q_t_05).fillna(0)
         df_t_06 = conn.query(q_t_06).fillna(0)
 
-        return df_metrics, df_raw, df_trend, df_piezas, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06
+        return df_metrics, df_raw, df_trend, df_piezas, df_oficial, df_t_04, df_t_05, df_t_06
     except Exception as e:
-        st.error(f"Error SQL: {e}"); return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        st.error(f"Error SQL: {e}"); return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # ==========================================
 # 3. MOTOR: GESTIÓN A LA VISTA
 # ==========================================
-def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw, df_trend, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06):
+def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw, df_trend, df_oficial, df_t_04, df_t_05, df_t_06, mes_seleccionado):
     if area.upper() == "ESTAMPADO": theme_color = (15, 76, 129); grupos_area = GRUPOS_ESTAMPADO
     elif area.upper() == "SOLDADURA": theme_color = (211, 84, 0); grupos_area = GRUPOS_SOLDADURA
     else: theme_color = (40, 40, 40); grupos_area = GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA
@@ -197,37 +196,33 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
         pdf.set_fill_color(255, 255, 255); pdf.set_text_color(0); pdf.set_font("Arial", '', 10)
         pdf.cell(40, 6, label_reporte, 1, 0, 'C', True); pdf.cell(197, 6, "EMPRESA: FAMMA", 1, 0, 'C', True); pdf.cell(40, 6, "DISPONIBILIDAD", 1, 1, 'C', True)
 
-        # Lógica original como base (Mantiene Acumulado YTD y máquinas agrupadas que no existan en PROD_M_04)
-        tp = df_m_t['T_Planificado'].sum(); to = df_m_t['T_Operativo'].sum()
-        v_oee = (df_m_t['OEE_Num'] * df_m_t['T_Planificado']).sum() / tp if tp > 0 else 0
-        v_disp = (df_m_t['Disp_Num'] * df_m_t['T_Planificado']).sum() / tp if tp > 0 else 0
-        v_perf = (df_m_t['Perf_Num'] * df_m_t['T_Operativo']).sum() / to if to > 0 else 0
-        v_cal = (df_m_t['Cal_Num'] * df_m_t['T_Operativo']).sum() / to if to > 0 else 0
+        v_oee, v_perf, v_disp, v_cal = 0, 0, 0, 0
+        encontrado_oficial = False
 
-        # === INYECCIÓN DEL DATO EXACTO (Reemplazo del promedio ponderado donde aplique) ===
-        override = False
-        if target == 'GENERAL':
-            if area.upper() == "GLOBAL" and not df_m_06.empty:
-                v_oee = df_m_06['OEE_Num'].iloc[0]; v_disp = df_m_06['Disp_Num'].iloc[0]; v_perf = df_m_06['Perf_Num'].iloc[0]; v_cal = df_m_06['Cal_Num'].iloc[0]
-                override = True
+        if not df_oficial.empty:
+            if target == 'GENERAL':
+                if area.upper() == 'GLOBAL': row = df_oficial[df_oficial['Nivel'] == 'GLOBAL']
+                else: row = df_oficial[(df_oficial['Nivel'] == 'FABRICA') & (df_oficial['Grupo'].str.contains(area.upper(), na=False))]
             else:
-                planta_code = "ESTAMPADO" if area.upper() == "ESTAMPADO" else "SOLDADURA"
-                df_p_val = df_m_05[df_m_05['Planta'] == planta_code]
-                if not df_p_val.empty:
-                    v_oee = df_p_val['OEE_Num'].iloc[0]; v_disp = df_p_val['Disp_Num'].iloc[0]; v_perf = df_p_val['Perf_Num'].iloc[0]; v_cal = df_p_val['Cal_Num'].iloc[0]
-                    override = True
-        else:
-            df_l_val = df_m_04[df_m_04['Planta_Linea'] == target]
-            if not df_l_val.empty:
-                v_oee = df_l_val['OEE_Num'].iloc[0]; v_disp = df_l_val['Disp_Num'].iloc[0]; v_perf = df_l_val['Perf_Num'].iloc[0]; v_cal = df_l_val['Cal_Num'].iloc[0]
-                override = True
-                
-        # Acomodamos el formato matemático para que el widget mantenga el diseño original intacto
-        if override:
-            v_oee /= 100; v_disp /= 100; v_perf /= 100; v_cal /= 100
-        else:
-            if v_oee > 1.5: v_oee /= 100; v_disp /= 100; v_perf /= 100; v_cal /= 100
-        # =================================================================================
+                row = df_oficial[(df_oficial['Nivel'] == 'LINEA') & (df_oficial['Grupo'] == target)]
+
+            if not row.empty:
+                v_oee = row['Oee'].values[0]
+                v_perf = row['Performance'].values[0]
+                v_disp = row['Disp'].values[0]
+                v_cal = row['Cal'].values[0]
+                encontrado_oficial = True
+
+        if not encontrado_oficial or (v_oee == 0 and v_perf == 0 and v_disp == 0):
+            tp = df_m_t['T_Planificado'].sum(); to = df_m_t['T_Operativo'].sum()
+            v_oee = (df_m_t['OEE_Num'] * df_m_t['T_Planificado']).sum() / tp if tp > 0 else 0
+            v_disp = (df_m_t['Disp_Num'] * df_m_t['T_Planificado']).sum() / tp if tp > 0 else 0
+            v_perf = (df_m_t['Perf_Num'] * df_m_t['T_Operativo']).sum() / to if to > 0 else 0
+            v_cal = (df_m_t['Cal_Num'] * df_m_t['T_Operativo']).sum() / to if to > 0 else 0
+
+        # Corrección dinámica para porcentajes
+        if v_oee > 1.5 or v_perf > 1.5 or v_disp > 1.5:
+            v_oee /= 100.0; v_perf /= 100.0; v_disp /= 100.0; v_cal /= 100.0
 
         kpis = {"OEE": (v_oee, 0.75), "PERFORMANCE": (v_perf, 0.90), "DISPONIBILIDAD": (v_disp, 0.88), "CALIDAD": (v_cal, 0.95)}
         for i, (lbl, (v, obj)) in enumerate(kpis.items()):
@@ -237,12 +232,11 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             pdf.set_xy(x, 33); pdf.set_font("Arial", 'B', 20); pdf.cell(65, 10, f"{v*100:.1f}%", 0, 0, 'C')
         pdf.set_text_color(0)
 
-        # Gráficos con ACUMULADO ANUAL (YTD) - Ahora utiliza las barras puras mensuales
-        def add_trend_with_ytd(df_in, col, title, x_pos, y_pos, target_val, large=False):
+        # Gráficos con ACUMULADO ANUAL (YTD) Sincronizados
+        def add_trend_with_ytd(df_in, col, title, x_pos, y_pos, target_val, large=False, off_val=None):
             if df_in.empty and target != 'GENERAL': return
             res = []
             
-            # Determinamos si contamos con la tabla exacta para esta vuelta
             override_tr = False
             df_exact = pd.DataFrame()
             
@@ -274,6 +268,15 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             
             df_g = pd.DataFrame(res)
             
+            # Sincronización del mes seleccionado (Desde la tabla del Streamlit)
+            if off_val is not None and not df_g.empty:
+                if mes_seleccionado in df_g['M'].values:
+                    df_g.loc[df_g['M'] == mes_seleccionado, 'V'] = off_val
+                else:
+                    new_row = pd.DataFrame([{'M': mes_seleccionado, 'V': off_val}])
+                    df_g = pd.concat([df_g, new_row], ignore_index=True)
+                    df_g = df_g.sort_values('M')
+
             # Calcular YTD Real (Se mantiene la lógica ponderada original para el acumulado anual)
             tp_ytd, to_ytd = df_in['T_Planificado'].sum(), df_in['T_Operativo'].sum()
             if col == 'OEE': ytd_v = (df_in['OEE_Num'] * df_in['T_Planificado']).sum() / tp_ytd if tp_ytd > 0 else 0
@@ -294,13 +297,13 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
             fig.update_layout(title=dict(text=f"<b>{title}</b>", font=dict(size=13)), margin=dict(t=35, b=20, l=10, r=10), yaxis=dict(visible=False, range=[0, max(1.1, df_plot['V'].max()*1.3)]))
             img = save_chart(fig, 600, 300 if large else 220); pdf.image(img, x_pos+2, y_pos+2, 134 if large else 132); os.remove(img)
 
-        # Paneles de gráficos
+        # Paneles de gráficos (Se inyectan los off_vals para sincronizar los gráficos)
         if area.upper() == "GLOBAL":
-            pdf.draw_panel(10, 48, 136, 75); pdf.draw_panel(149, 48, 138, 75); add_trend_with_ytd(df_t_t, 'OEE', 'OEE (%)', 10, 48, 0.75, True); add_trend_with_ytd(df_t_t, 'PERFORMANCE', 'PERFORMANCE (%)', 150, 48, 0.90, True)
-            pdf.draw_panel(10, 126, 136, 75); pdf.draw_panel(149, 126, 138, 75); add_trend_with_ytd(df_t_t, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%)', 10, 126, 0.88, True); add_trend_with_ytd(df_t_t, 'CALIDAD', 'CALIDAD (%)', 150, 126, 0.95, True)
+            pdf.draw_panel(10, 48, 136, 75); pdf.draw_panel(149, 48, 138, 75); add_trend_with_ytd(df_t_t, 'OEE', 'OEE (%)', 10, 48, 0.75, True, v_oee); add_trend_with_ytd(df_t_t, 'PERFORMANCE', 'PERFORMANCE (%)', 150, 48, 0.90, True, v_perf)
+            pdf.draw_panel(10, 126, 136, 75); pdf.draw_panel(149, 126, 138, 75); add_trend_with_ytd(df_t_t, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%)', 10, 126, 0.88, True, v_disp); add_trend_with_ytd(df_t_t, 'CALIDAD', 'CALIDAD (%)', 150, 126, 0.95, True, v_cal)
         else:
-            pdf.draw_panel(10, 48, 136, 52); pdf.draw_panel(149, 48, 138, 52); add_trend_with_ytd(df_t_t, 'OEE', 'OEE (%)', 10, 48, 0.75); add_trend_with_ytd(df_t_t, 'PERFORMANCE', 'PERFORMANCE (%)', 150, 48, 0.90)
-            pdf.draw_panel(10, 102, 136, 52); pdf.draw_panel(149, 102, 138, 52); add_trend_with_ytd(df_t_t, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%)', 10, 102, 0.88); add_trend_with_ytd(df_t_t, 'CALIDAD', 'CALIDAD (%)', 150, 102, 0.95)
+            pdf.draw_panel(10, 48, 136, 52); pdf.draw_panel(149, 48, 138, 52); add_trend_with_ytd(df_t_t, 'OEE', 'OEE (%)', 10, 48, 0.75, False, v_oee); add_trend_with_ytd(df_t_t, 'PERFORMANCE', 'PERFORMANCE (%)', 150, 48, 0.90, False, v_perf)
+            pdf.draw_panel(10, 102, 136, 52); pdf.draw_panel(149, 102, 138, 52); add_trend_with_ytd(df_t_t, 'DISPONIBILIDAD', 'DISPONIBILIDAD (%)', 10, 102, 0.88, False, v_disp); add_trend_with_ytd(df_t_t, 'CALIDAD', 'CALIDAD (%)', 150, 102, 0.95, False, v_cal)
             
             # Top Fallos y Barra Detallada
             pdf.draw_panel(10, 156, 136, 45); pdf.draw_panel(149, 156, 138, 45)
@@ -396,11 +399,81 @@ mes_str = {1:"ENERO",2:"FEBRERO",3:"MARZO",4:"ABRIL",5:"MAYO",6:"JUNIO",7:"JULIO
 ini = pd.to_datetime(f"{a_sel}-{m_sel}-01"); fin = ini + pd.offsets.MonthEnd(0)
 
 with st.spinner("Cargando datos..."):
-    # Recepción de las 6 nuevas variables de datos pre-calculados
-    df_m, df_r, df_t, df_p, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06 = fetch_data_from_db(ini, fin, m_sel, a_sel)
+    df_m, df_r, df_t, df_p, df_oficial, df_t_04, df_t_05, df_t_06 = fetch_data_from_db(ini, fin, m_sel, a_sel)
 
 st.write("### 2. Datos Manuales")
 hs_rt = st.number_input("Horas de RT (Estampado):", 0.0, 1000.0, 0.0)
+
+st.divider()
+
+# --- NUEVA SECCIÓN DE EDICIÓN DE INDICADORES (CON PRE-CÁLCULO AUTOMÁTICO) ---
+st.write("### 2.5. Corrección de Indicadores Oficiales (Wiidem)")
+st.info("Estos son los valores que figurarán en el PDF. Si Wiidem los tiene calculados, aparecen aquí. Si no, **el sistema los pre-calculó automáticamente**. Edítelos libremente si difieren del reporte oficial.")
+
+def calcular_kpis_base(df_m_raw):
+    if df_m_raw.empty: return pd.DataFrame()
+    mapa = {str(k).strip().upper(): str(v).strip().upper() for k, v in MAQUINAS_MAP.items()}
+    df = df_m_raw.copy()
+    df['Grupo'] = df['Máquina'].astype(str).str.strip().str.upper().map(mapa).fillna('OTRO')
+    
+    def get_pct(val): return val * 100 if val <= 1.5 else val
+    
+    resultados = []
+    def calc_r(name, nivel, data):
+        if data.empty: return {'Nivel': nivel, 'Grupo': name, 'Performance': 0.0, 'Disp': 0.0, 'Cal': 0.0, 'Oee': 0.0}
+        tp = data['T_Planificado'].sum()
+        to = data['T_Operativo'].sum()
+        
+        v_oee = (data['OEE_Num'] * data['T_Planificado']).sum() / tp if tp > 0 else 0
+        v_disp = (data['Disp_Num'] * data['T_Planificado']).sum() / tp if tp > 0 else 0
+        v_perf = (data['Perf_Num'] * data['T_Operativo']).sum() / to if to > 0 else 0
+        v_cal = (data['Cal_Num'] * data['T_Operativo']).sum() / to if to > 0 else 0
+        
+        return {
+            'Nivel': nivel, 'Grupo': name,
+            'Performance': get_pct(v_perf),
+            'Disp': get_pct(v_disp),
+            'Cal': get_pct(v_cal),
+            'Oee': get_pct(v_oee)
+        }
+
+    resultados.append(calc_r('GLOBAL', 'GLOBAL', df))
+    resultados.append(calc_r('ESTAMPADO', 'FABRICA', df[df['Grupo'].isin(GRUPOS_ESTAMPADO)]))
+    resultados.append(calc_r('SOLDADURA', 'FABRICA', df[df['Grupo'].isin(GRUPOS_SOLDADURA)]))
+    for g in GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA:
+        resultados.append(calc_r(g, 'LINEA', df[df['Grupo'] == g]))
+        
+    return pd.DataFrame(resultados)
+
+df_base_editor = calcular_kpis_base(df_m)
+
+if not df_base_editor.empty and not df_oficial.empty:
+    df_base_editor.set_index(['Nivel', 'Grupo'], inplace=True)
+    df_of_idx = df_oficial.set_index(['Nivel', 'Grupo'])
+    for col in ['Performance', 'Disp', 'Cal', 'Oee']:
+        if col in df_of_idx.columns:
+            valid_vals = df_of_idx[df_of_idx[col] > 0][col]
+            df_base_editor.update(valid_vals)
+    df_base_editor.reset_index(inplace=True)
+elif df_base_editor.empty:
+    estruct = [{'Nivel': 'GLOBAL', 'Grupo': 'GLOBAL'}, {'Nivel': 'FABRICA', 'Grupo': 'ESTAMPADO'}, {'Nivel': 'FABRICA', 'Grupo': 'SOLDADURA'}]
+    estruct += [{'Nivel': 'LINEA', 'Grupo': g} for g in GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA]
+    df_base_editor = pd.DataFrame(estruct)
+    df_base_editor[['Performance', 'Disp', 'Cal', 'Oee']] = 0.0
+
+df_oficial_editado = st.data_editor(
+    df_base_editor,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "Nivel": st.column_config.TextColumn("Nivel", disabled=True),
+        "Grupo": st.column_config.TextColumn("Grupo", disabled=True),
+        "Performance": st.column_config.NumberColumn("Performance", format="%.4f", step=0.01),
+        "Disp": st.column_config.NumberColumn("Disponibilidad", format="%.4f", step=0.01),
+        "Cal": st.column_config.NumberColumn("Calidad", format="%.4f", step=0.01),
+        "Oee": st.column_config.NumberColumn("OEE", format="%.4f", step=0.01),
+    }
+)
 
 st.divider()
 st.write("### 3. Descargas")
@@ -408,19 +481,19 @@ cd, cp, cg = st.columns(3)
 
 with cd:
     st.subheader("⚙️ OEE")
-    if st.button("Preparar OEE Estampado"): st.session_state['oee_e'] = crear_pdf_gestion_a_la_vista("Estampado", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06)
-    if 'oee_e' in st.session_state: st.download_button("📥 Bajar Estampado", st.session_state['oee_e'], f"FAMMA_OEE_ESTAMPADO_{mes_str}.pdf")
-    if st.button("Preparar OEE Soldadura"): st.session_state['oee_s'] = crear_pdf_gestion_a_la_vista("Soldadura", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06)
-    if 'oee_s' in st.session_state: st.download_button("📥 Bajar Soldadura", st.session_state['oee_s'], f"FAMMA_OEE_SOLDADURA_{mes_str}.pdf")
+    if st.button("Preparar OEE Estampado"): st.session_state['oee_e'] = crear_pdf_gestion_a_la_vista("Estampado", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_oficial_editado, df_t_04, df_t_05, df_t_06, m_sel)
+    if 'oee_e' in st.session_state: st.download_button("📥 Bajar Estampado", st.session_state['oee_e'], "FAMMA_OEE_ESTAMPADO.pdf")
+    if st.button("Preparar OEE Soldadura"): st.session_state['oee_s'] = crear_pdf_gestion_a_la_vista("Soldadura", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_oficial_editado, df_t_04, df_t_05, df_t_06, m_sel)
+    if 'oee_s' in st.session_state: st.download_button("📥 Bajar Soldadura", st.session_state['oee_s'], "FAMMA_OEE_SOLDADURA.pdf")
 
 with cp:
     st.subheader("🏭 Producción")
     if st.button("Preparar Prod Estampado"): st.session_state['pr_e'] = crear_pdf_informe_productivo("Estampado", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt)
-    if 'pr_e' in st.session_state: st.download_button("📥 Bajar Prod Estampado", st.session_state['pr_e'], f"FAMMA_PROD_ESTAMPADO_{mes_str}.pdf")
+    if 'pr_e' in st.session_state: st.download_button("📥 Bajar Prod Estampado", st.session_state['pr_e'], "FAMMA_PROD_ESTAMPADO.pdf")
     if st.button("Preparar Prod Soldadura"): st.session_state['pr_s'] = crear_pdf_informe_productivo("Soldadura", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt)
-    if 'pr_s' in st.session_state: st.download_button("📥 Bajar Prod Soldadura", st.session_state['pr_s'], f"FAMMA_PROD_SOLDADURA_{mes_str}.pdf")
+    if 'pr_s' in st.session_state: st.download_button("📥 Bajar Prod Soldadura", st.session_state['pr_s'], "FAMMA_PROD_SOLDADURA.pdf")
 
 with cg:
     st.subheader("🌎 Global")
-    if st.button("Preparar Reporte Global"): st.session_state['glob'] = crear_pdf_gestion_a_la_vista("GLOBAL", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_m_04, df_m_05, df_m_06, df_t_04, df_t_05, df_t_06)
-    if 'glob' in st.session_state: st.download_button("📥 Bajar Global", st.session_state['glob'], f"FAMMA_GENERAL_{mes_str}.pdf")
+    if st.button("Preparar Reporte Global"): st.session_state['glob'] = crear_pdf_gestion_a_la_vista("GLOBAL", f"{m_sel}/{a_sel}", df_m, df_r, df_t, df_oficial_editado, df_t_04, df_t_05, df_t_06, m_sel)
+    if 'glob' in st.session_state: st.download_button("📥 Bajar Global", st.session_state['glob'], "FAMMA_GENERAL.pdf")
