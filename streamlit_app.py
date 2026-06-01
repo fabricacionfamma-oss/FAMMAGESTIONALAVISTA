@@ -378,7 +378,6 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
 
         def add_prod_chart(y_col, title, y_pos, target_line, is_pct=True):
             if df_ev.empty: return
-            # Si el área es estampado, usamos su azul oscuro, caso contrario el naranja de soldadura. Rojo si supera el target.
             color_base = '#0F4C81' if area.upper() == "ESTAMPADO" else '#D35400'
             color = '#E74C3C' if is_pct and df_ev[y_col].iloc[-1] > target_line else color_base
             
@@ -399,59 +398,70 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
                 paper_bgcolor='rgba(0,0,0,0)', 
                 plot_bgcolor='rgba(0,0,0,0)'
             )
-            fig.update_traces(cliponaxis=False) # Evita que el texto de arriba se corte
+            fig.update_traces(cliponaxis=False)
             
             img = save_chart(fig, 600, 240)
             pdf.image(img, 11, y_pos, 133)
             os.remove(img)
 
-        # Ajuste de coordenadas lado izquierdo (Espacios más limpios y simétricos)
+        # Paneles del Lado Izquierdo
         pdf.draw_panel(10, 20, 135, 58); add_prod_chart('Totales', 'PIEZAS TOTALES', 22, None, False)
         pdf.draw_panel(10, 82, 135, 58); add_prod_chart('% Scrap', '% SCRAP', 84, target_scrap)
         pdf.draw_panel(10, 144, 135, 58); add_prod_chart('% RT', '% RE-TRABAJO', 146, target_rt)
 
-        # Ajuste de coordenadas lado derecho (Top 5s)
-        if not df_p_t.empty:
-            # Agrupar y ordenar ascendentemente para que el mayor quede arriba en barras horizontales
+        # Paneles del Lado Derecho (Top 5s)
+        # Dibujamos siempre los fondos para que no queden huecos en blanco (ej. Línea 1.5)
+        pdf.draw_panel(150, 20, 135, 87)
+        pdf.draw_panel(150, 111, 135, 87)
+
+        # Si el dataframe global de piezas está vacío en ese grupo, creamos dfs vacíos
+        if df_p_t.empty:
+            ts = pd.DataFrame(columns=['Pieza', 'Scrap'])
+            tr = pd.DataFrame(columns=['Pieza', 'RT'])
+        else:
             ts = df_p_t.groupby('Pieza')['Scrap'].sum().nlargest(5).reset_index().sort_values('Scrap', ascending=True)
             tr = df_p_t.groupby('Pieza')['RT'].sum().nlargest(5).reset_index().sort_values('RT', ascending=True)
 
-            bar_color = ['#0F4C81'] if area.upper() == "ESTAMPADO" else ['#D35400']
-            
-            f4 = px.bar(ts, x='Scrap', y='Pieza', orientation='h', title="<b>TOP 5 SCRAP</b>", color_discrete_sequence=bar_color)
-            f5 = px.bar(tr, x='RT', y='Pieza', orientation='h', title="<b>TOP 5 RT</b>", color_discrete_sequence=bar_color)
-            
-            for i, f in enumerate([f4, f5]):
+        bar_color = ['#0F4C81'] if area.upper() == "ESTAMPADO" else ['#D35400']
+        
+        for i, (df_plot, col, title, y_pos) in enumerate([(ts, 'Scrap', 'TOP 5 SCRAP', 20), (tr, 'RT', 'TOP 5 RT', 111)]):
+            if not df_plot.empty and df_plot[col].sum() > 0:
+                f = px.bar(df_plot, x=col, y='Pieza', orientation='h', title=f"<b>{title}</b>", color_discrete_sequence=bar_color)
                 f.update_layout(
                     title=dict(font=dict(size=14), x=0.5, xanchor='center'),
-                    # CRÍTICO: 'l=120' da espacio para el nombre de pieza. 'r=45' evita que el número se corte
                     margin=dict(t=40, b=20, l=120, r=45), 
                     xaxis=dict(visible=False), 
                     yaxis=dict(title="", type='category', tickfont=dict(size=10)),
-                    paper_bgcolor='rgba(0,0,0,0)', 
-                    plot_bgcolor='rgba(0,0,0,0)'
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
                 )
                 f.update_traces(texttemplate='<b>%{x}</b>', textposition='outside', cliponaxis=False)
+                img = save_chart(f, 600, 360)
+                pdf.image(img, 151, y_pos + 1, 133)
+                os.remove(img)
+            else:
+                # Mostrar texto indicando que está vacío en lugar de dejar el cuadro pelado
+                pdf.set_xy(150, y_pos + 5)
+                pdf.set_font("Arial", 'B', 12)
+                pdf.set_text_color(50, 50, 50)
+                pdf.cell(135, 10, title, 0, 1, 'C')
                 
-                if i == 0 and ts['Scrap'].sum() > 0:
-                    pdf.draw_panel(150, 20, 135, 87)
-                    img = save_chart(f, 600, 360)
-                    pdf.image(img, 151, 21, 133)
-                    os.remove(img)
-                elif i == 1 and tr['RT'].sum() > 0:
-                    pdf.draw_panel(150, 111, 135, 87)
-                    img = save_chart(f, 600, 360)
-                    pdf.image(img, 151, 112, 133)
-                    os.remove(img)
+                pdf.set_xy(150, y_pos + 40)
+                pdf.set_font("Arial", 'B', 10)
+                pdf.set_text_color(150, 150, 150)
+                pdf.cell(135, 10, "SIN REGISTROS EN EL PERIODO", 0, 1, 'C')
+                pdf.set_text_color(0, 0, 0)
 
-        # Cuadro de HS RE-TRABAJO para General de Estampado alineado a los márgenes nuevos
+        # Cuadro de HS RE-TRABAJO (General Estampado) alineado a los paneles izquierdos
         if target == 'GENERAL' and area.upper() == 'ESTAMPADO':
-            pdf.draw_panel(150, 202, 135, 12, 2, (240,240,240))
+            pdf.draw_panel(150, 202, 135, 12, 2, (240, 240, 240))
             pdf.set_xy(150, 202)
             pdf.set_font("Arial", 'B', 10)
-            pdf.set_text_color(0)
-            pdf.cell(67, 12, "HS RE-TRABAJO", 0, 0, 'C')
-            pdf.cell(67, 12, f"{hs_rt:.1f}", 0, 1, 'C')
+            pdf.set_text_color(50, 50, 50)
+            pdf.cell(67.5, 12, "HS RE-TRABAJO TOTAL:", 0, 0, 'C')
+            pdf.set_text_color(*theme_color)
+            pdf.set_font("Arial", 'B', 11)
+            pdf.cell(67.5, 12, f"{hs_rt:.1f} hs", 0, 1, 'C')
+            pdf.set_text_color(0, 0, 0)
 
     return pdf.output(dest='S').encode('latin-1')
 # ==========================================
