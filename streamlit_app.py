@@ -352,10 +352,15 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
             d['Grupo'] = d['Máquina'].str.strip().str.upper().map(mapa).fillna('OTRO')
     
     grupos = GRUPOS_ESTAMPADO if area.upper() == "ESTAMPADO" else GRUPOS_SOLDADURA
-    paginas = ['GENERAL'] + [g.upper() for g in grupos if not df_t.empty and g.upper() in df_t['Grupo'].unique()]
+    
+    # CORRECCIÓN: Filtrar para que solo aparezcan páginas de líneas que tuvieron producción en el mes seleccionado
+    grupos_activos_mes = df_t[df_t['Month'] == mes_sel]['Grupo'].unique() if not df_t.empty else []
+    paginas = ['GENERAL'] + [g.upper() for g in grupos if g.upper() in grupos_activos_mes]
 
     for target in paginas:
         pdf.add_page(orientation='L')
+        # CORRECCIÓN: Apagar el salto de página automático para que los elementos del fondo no generen hojas en blanco
+        pdf.set_auto_page_break(auto=False, margin=0)
         pdf.add_gradient_background()
         
         df_t_t = df_t if target == 'GENERAL' else df_t[df_t['Grupo'] == target]
@@ -410,11 +415,9 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         pdf.draw_panel(10, 144, 135, 58); add_prod_chart('% RT', '% RE-TRABAJO', 146, target_rt)
 
         # Paneles del Lado Derecho (Top 5s)
-        # Dibujamos siempre los fondos para que no queden huecos en blanco (ej. Línea 1.5)
         pdf.draw_panel(150, 20, 135, 87)
         pdf.draw_panel(150, 111, 135, 87)
 
-        # Si el dataframe global de piezas está vacío en ese grupo, creamos dfs vacíos
         if df_p_t.empty:
             ts = pd.DataFrame(columns=['Pieza', 'Scrap'])
             tr = pd.DataFrame(columns=['Pieza', 'RT'])
@@ -439,7 +442,6 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
                 pdf.image(img, 151, y_pos + 1, 133)
                 os.remove(img)
             else:
-                # Mostrar texto indicando que está vacío en lugar de dejar el cuadro pelado
                 pdf.set_xy(150, y_pos + 5)
                 pdf.set_font("Arial", 'B', 12)
                 pdf.set_text_color(50, 50, 50)
@@ -451,16 +453,16 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
                 pdf.cell(135, 10, "SIN REGISTROS EN EL PERIODO", 0, 1, 'C')
                 pdf.set_text_color(0, 0, 0)
 
-        # Cuadro de HS RE-TRABAJO (General Estampado) alineado a los paneles izquierdos
+        # CORRECCIÓN: Cuadro de HS RE-TRABAJO acomodado dentro de los límites de la hoja
         if target == 'GENERAL' and area.upper() == 'ESTAMPADO':
-            pdf.draw_panel(150, 202, 135, 12, 2, (240, 240, 240))
-            pdf.set_xy(150, 202)
+            pdf.draw_panel(150, 199, 135, 10, 2, (240, 240, 240))
+            pdf.set_xy(150, 199)
             pdf.set_font("Arial", 'B', 10)
             pdf.set_text_color(50, 50, 50)
-            pdf.cell(67.5, 12, "HS RE-TRABAJO TOTAL:", 0, 0, 'C')
+            pdf.cell(67.5, 10, "HS RE-TRABAJO TOTAL:", 0, 0, 'C')
             pdf.set_text_color(*theme_color)
             pdf.set_font("Arial", 'B', 11)
-            pdf.cell(67.5, 12, f"{hs_rt:.1f} hs", 0, 1, 'C')
+            pdf.cell(67.5, 10, f"{hs_rt:.1f} hs", 0, 1, 'C')
             pdf.set_text_color(0, 0, 0)
 
     return pdf.output(dest='S').encode('latin-1')
