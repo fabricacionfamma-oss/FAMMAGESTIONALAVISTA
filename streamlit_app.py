@@ -330,7 +330,7 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
 # ==========================================
 # 4. MOTOR: INFORME PRODUCTIVO
 # ==========================================
-def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_sel, anio_sel, hs_rt, df_prod_editado):
+def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_sel, anio_sel, hs_rt, df_prod_editado, df_piezas_editado):
     theme_color = (15, 76, 129) if area.upper() == "ESTAMPADO" else (211, 84, 0)
     target_scrap = 0.50 if area.upper() == "ESTAMPADO" else 0.30
     target_rt = 2.00
@@ -339,13 +339,20 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
     mapa = {str(k).strip().upper(): str(v).strip().upper() for k, v in MAQUINAS_MAP.items()}
     
     df_t = df_trend.copy()
-    df_p = df_piezas.copy()
     
+    # Aplicar la tabla de piezas editada si está disponible y tiene datos
+    if df_piezas_editado is not None and not df_piezas_editado.empty:
+        df_p = df_piezas_editado.copy()
+    else:
+        df_p = df_piezas.copy()
+        if not df_p.empty and 'Máquina' in df_p.columns:
+            df_p['Grupo'] = df_p['Máquina'].str.strip().str.upper().map(mapa).fillna('OTRO')
+            
     # Limpiar y forzar las piezas a string para evitar recortes numéricos en Plotly
     if not df_p.empty and 'Pieza' in df_p.columns:
         df_p['Pieza'] = df_p['Pieza'].astype(str).fillna('S/C')
         
-    for d in [df_t, df_p]: 
+    for d in [df_t]: 
         if not d.empty and 'Máquina' in d.columns:
             d['Grupo'] = d['Máquina'].str.strip().str.upper().map(mapa).fillna('OTRO')
     
@@ -379,9 +386,7 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         # Procesamiento de tendencia productiva
         df_ev = df_t_t.groupby('Month')[['Buenas', 'Observadas', 'Retrabajo', 'Totales']].sum().reset_index()
 
-        # ==============================================================
-        # INCORPORAR LOS VALORES EDITADOS MANUALMENTE
-        # ==============================================================
+        # INCORPORAR LOS VALORES EDITADOS MANUALMENTE (Totales mes seleccionado)
         lookup_grupo = area.upper() if target == 'GENERAL' else target
         if df_prod_editado is not None and not df_prod_editado.empty:
             fila_editada = df_prod_editado[df_prod_editado['Grupo'] == lookup_grupo]
@@ -581,7 +586,7 @@ with col_oee:
     )
 
 with col_prod:
-    # --- NUEVA SECCIÓN DE EDICIÓN DE CANTIDADES (PRODUCCIÓN) ---
+    # --- SECCIÓN DE EDICIÓN DE CANTIDADES TOTALES (PRODUCCIÓN) ---
     st.write("### 2.6. Edición de Cantidades")
     
     def calcular_prod_base(df_t_raw, mes_sel):
@@ -628,6 +633,32 @@ with col_prod:
         }
     )
 
+    # --- NUEVA SECCIÓN DE EDICIÓN DE PIEZAS (TOP 5) ---
+    with st.expander("🛠️ Edición de Piezas (Gráficos Top 5)"):
+        st.info("Modifique el Scrap y RT de piezas específicas. Los gráficos de barras se actualizarán con estos valores.")
+        
+        def calcular_piezas_base(df_p_raw):
+            if df_p_raw.empty: return pd.DataFrame(columns=['Grupo', 'Pieza', 'Scrap', 'RT'])
+            mapa = {str(k).strip().upper(): str(v).strip().upper() for k, v in MAQUINAS_MAP.items()}
+            df = df_p_raw.copy()
+            df['Grupo'] = df['Máquina'].astype(str).str.strip().str.upper().map(mapa).fillna('OTRO')
+            df['Pieza'] = df['Pieza'].astype(str).fillna('S/C')
+            res = df.groupby(['Grupo', 'Pieza'])[['Scrap', 'RT']].sum().reset_index()
+            return res
+        
+        df_base_piezas = calcular_piezas_base(df_p)
+        
+        df_piezas_editado = st.data_editor(
+            df_base_piezas,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Grupo": st.column_config.TextColumn("Grupo", disabled=True),
+                "Pieza": st.column_config.TextColumn("Pieza", disabled=True),
+                "Scrap": st.column_config.NumberColumn("Scrap", step=1),
+                "RT": st.column_config.NumberColumn("RT", step=1),
+            }
+        )
 
 st.divider()
 st.write("### 3. Descargas")
@@ -642,9 +673,9 @@ with cd:
 
 with cp:
     st.subheader("🏭 Producción")
-    if st.button("Preparar Prod Estampado"): st.session_state['pr_e'] = crear_pdf_informe_productivo("Estampado", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt, df_prod_editado)
+    if st.button("Preparar Prod Estampado"): st.session_state['pr_e'] = crear_pdf_informe_productivo("Estampado", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt, df_prod_editado, df_piezas_editado)
     if 'pr_e' in st.session_state: st.download_button("📥 Bajar Prod Estampado", st.session_state['pr_e'], "FAMMA_Productivo_Vista_ESTAMPADO.pdf")
-    if st.button("Preparar Prod Soldadura"): st.session_state['pr_s'] = crear_pdf_informe_productivo("Soldadura", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt, df_prod_editado)
+    if st.button("Preparar Prod Soldadura"): st.session_state['pr_s'] = crear_pdf_informe_productivo("Soldadura", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt, df_prod_editado, df_piezas_editado)
     if 'pr_s' in st.session_state: st.download_button("📥 Bajar Prod Soldadura", st.session_state['pr_s'], "FAMMA_Productivo_Vista_SOLDADURA.pdf")
 
 with cg:
