@@ -143,9 +143,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, mes, anio):
 
             df_raw[['Estado_Global', 'Categoria_Macro', 'Detalle_Final']] = df_raw.apply(lambda r: pd.Series(parse_event_tree(r)), axis=1)
 
-        # =========================================================================
         # TABLA UNIFICADA OFICIAL PARA EL EDITOR DE STREAMLIT (Nivel, Grupo)
-        # =========================================================================
         q_m06 = f"SELECT 'GLOBAL' as Nivel, 'GLOBAL' as Grupo, Performance, Availability as Disp, Quality as Cal, Oee FROM PROD_M_06 WHERE Year = {anio} AND Month = {mes}"
         q_m05 = f"SELECT 'FABRICA' as Nivel, UPPER(Factory) as Grupo, Performance, Availability as Disp, Quality as Cal, Oee FROM PROD_M_05 WHERE Year = {anio} AND Month = {mes}"
         q_m04 = f"SELECT 'LINEA' as Nivel, UPPER(Line) as Grupo, Performance, Availability as Disp, Quality as Cal, Oee FROM PROD_M_04 WHERE Year = {anio} AND Month = {mes}"
@@ -332,7 +330,7 @@ def crear_pdf_gestion_a_la_vista(area, label_reporte, df_metrics_pdf, df_pdf_raw
 # ==========================================
 # 4. MOTOR: INFORME PRODUCTIVO
 # ==========================================
-def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_sel, anio_sel, hs_rt):
+def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_sel, anio_sel, hs_rt, df_prod_editado):
     theme_color = (15, 76, 129) if area.upper() == "ESTAMPADO" else (211, 84, 0)
     target_scrap = 0.50 if area.upper() == "ESTAMPADO" else 0.30
     target_rt = 2.00
@@ -353,13 +351,16 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
     
     grupos = GRUPOS_ESTAMPADO if area.upper() == "ESTAMPADO" else GRUPOS_SOLDADURA
     
-    # CORRECCIÓN: Filtrar para que solo aparezcan páginas de líneas que tuvieron producción en el mes seleccionado
-    grupos_activos_mes = df_t[df_t['Month'] == mes_sel]['Grupo'].unique() if not df_t.empty else []
-    paginas = ['GENERAL'] + [g.upper() for g in grupos if g.upper() in grupos_activos_mes]
+    # Filtrar para que solo aparezcan páginas de líneas activas o editadas con valores > 0
+    grupos_activos = set(df_t[df_t['Month'] == mes_sel]['Grupo'].unique()) if not df_t.empty else set()
+    if df_prod_editado is not None and not df_prod_editado.empty:
+        activos_editados = df_prod_editado[(df_prod_editado['Nivel'] == 'LINEA') & (df_prod_editado['Totales'] > 0)]['Grupo'].unique()
+        grupos_activos.update(activos_editados)
+        
+    paginas = ['GENERAL'] + [g.upper() for g in grupos if g.upper() in grupos_activos]
 
     for target in paginas:
         pdf.add_page(orientation='L')
-        # CORRECCIÓN: Apagar el salto de página automático para que los elementos del fondo no generen hojas en blanco
         pdf.set_auto_page_break(auto=False, margin=0)
         pdf.add_gradient_background()
         
@@ -377,6 +378,28 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
         
         # Procesamiento de tendencia productiva
         df_ev = df_t_t.groupby('Month')[['Buenas', 'Observadas', 'Retrabajo', 'Totales']].sum().reset_index()
+
+        # ==============================================================
+        # INCORPORAR LOS VALORES EDITADOS MANUALMENTE
+        # ==============================================================
+        lookup_grupo = area.upper() if target == 'GENERAL' else target
+        if df_prod_editado is not None and not df_prod_editado.empty:
+            fila_editada = df_prod_editado[df_prod_editado['Grupo'] == lookup_grupo]
+            if not fila_editada.empty:
+                t_edit = fila_editada['Totales'].values[0]
+                s_edit = fila_editada['Scrap'].values[0]
+                r_edit = fila_editada['Retrabajo'].values[0]
+                
+                if mes_sel in df_ev['Month'].values:
+                    df_ev.loc[df_ev['Month'] == mes_sel, 'Totales'] = t_edit
+                    df_ev.loc[df_ev['Month'] == mes_sel, 'Observadas'] = s_edit
+                    df_ev.loc[df_ev['Month'] == mes_sel, 'Retrabajo'] = r_edit
+                else:
+                    new_row = pd.DataFrame([{'Month': mes_sel, 'Buenas': t_edit - s_edit - r_edit, 'Observadas': s_edit, 'Retrabajo': r_edit, 'Totales': t_edit}])
+                    df_ev = pd.concat([df_ev, new_row], ignore_index=True)
+                    df_ev = df_ev.sort_values('Month')
+
+        # Calcular porcentajes finales
         df_ev['% Scrap'] = (df_ev['Observadas'] / df_ev['Totales'].replace(0, 1)) * 100
         df_ev['% RT'] = (df_ev['Retrabajo'] / df_ev['Totales'].replace(0, 1)) * 100
         df_ev['Mes'] = df_ev['Month'].map({1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'})
@@ -453,7 +476,7 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
                 pdf.cell(135, 10, "SIN REGISTROS EN EL PERIODO", 0, 1, 'C')
                 pdf.set_text_color(0, 0, 0)
 
-        # CORRECCIÓN: Cuadro de HS RE-TRABAJO acomodado dentro de los límites de la hoja
+        # Cuadro de HS RE-TRABAJO acomodado
         if target == 'GENERAL' and area.upper() == 'ESTAMPADO':
             pdf.draw_panel(150, 199, 135, 10, 2, (240, 240, 240))
             pdf.set_xy(150, 199)
@@ -466,6 +489,7 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
             pdf.set_text_color(0, 0, 0)
 
     return pdf.output(dest='S').encode('latin-1')
+
 # ==========================================
 # 5. INTERFAZ STREAMLIT
 # ==========================================
@@ -486,74 +510,124 @@ hs_rt = st.number_input("Horas de RT (Estampado):", 0.0, 1000.0, 0.0)
 
 st.divider()
 
-# --- NUEVA SECCIÓN DE EDICIÓN DE INDICADORES (CON PRE-CÁLCULO AUTOMÁTICO) ---
-st.write("### 2.5. Corrección de Indicadores Oficiales (Wiidem)")
-st.info("Estos son los valores que figurarán en el PDF. Si Wiidem los tiene calculados, aparecen aquí. Si no, **el sistema los pre-calculó automáticamente**. Edítelos libremente si difieren del reporte oficial.")
+# --- SECCIÓN DE EDICIÓN DE INDICADORES (OEE) ---
+col_oee, col_prod = st.columns(2)
 
-def calcular_kpis_base(df_m_raw):
-    if df_m_raw.empty: return pd.DataFrame()
-    mapa = {str(k).strip().upper(): str(v).strip().upper() for k, v in MAQUINAS_MAP.items()}
-    df = df_m_raw.copy()
-    df['Grupo'] = df['Máquina'].astype(str).str.strip().str.upper().map(mapa).fillna('OTRO')
-    
-    def get_pct(val): return val * 100 if val <= 1.5 else val
-    
-    resultados = []
-    def calc_r(name, nivel, data):
-        if data.empty: return {'Nivel': nivel, 'Grupo': name, 'Performance': 0.0, 'Disp': 0.0, 'Cal': 0.0, 'Oee': 0.0}
-        tp = data['T_Planificado'].sum()
-        to = data['T_Operativo'].sum()
+with col_oee:
+    st.write("### 2.5. Edición de Indicadores (OEE)")
+    def calcular_kpis_base(df_m_raw):
+        if df_m_raw.empty: return pd.DataFrame()
+        mapa = {str(k).strip().upper(): str(v).strip().upper() for k, v in MAQUINAS_MAP.items()}
+        df = df_m_raw.copy()
+        df['Grupo'] = df['Máquina'].astype(str).str.strip().str.upper().map(mapa).fillna('OTRO')
         
-        v_oee = (data['OEE_Num'] * data['T_Planificado']).sum() / tp if tp > 0 else 0
-        v_disp = (data['Disp_Num'] * data['T_Planificado']).sum() / tp if tp > 0 else 0
-        v_perf = (data['Perf_Num'] * data['T_Operativo']).sum() / to if to > 0 else 0
-        v_cal = (data['Cal_Num'] * data['T_Operativo']).sum() / to if to > 0 else 0
+        def get_pct(val): return val * 100 if val <= 1.5 else val
         
-        return {
-            'Nivel': nivel, 'Grupo': name,
-            'Performance': get_pct(v_perf),
-            'Disp': get_pct(v_disp),
-            'Cal': get_pct(v_cal),
-            'Oee': get_pct(v_oee)
+        resultados = []
+        def calc_r(name, nivel, data):
+            if data.empty: return {'Nivel': nivel, 'Grupo': name, 'Performance': 0.0, 'Disp': 0.0, 'Cal': 0.0, 'Oee': 0.0}
+            tp = data['T_Planificado'].sum()
+            to = data['T_Operativo'].sum()
+            
+            v_oee = (data['OEE_Num'] * data['T_Planificado']).sum() / tp if tp > 0 else 0
+            v_disp = (data['Disp_Num'] * data['T_Planificado']).sum() / tp if tp > 0 else 0
+            v_perf = (data['Perf_Num'] * data['T_Operativo']).sum() / to if to > 0 else 0
+            v_cal = (data['Cal_Num'] * data['T_Operativo']).sum() / to if to > 0 else 0
+            
+            return {
+                'Nivel': nivel, 'Grupo': name,
+                'Performance': get_pct(v_perf),
+                'Disp': get_pct(v_disp),
+                'Cal': get_pct(v_cal),
+                'Oee': get_pct(v_oee)
+            }
+
+        resultados.append(calc_r('GLOBAL', 'GLOBAL', df))
+        resultados.append(calc_r('ESTAMPADO', 'FABRICA', df[df['Grupo'].isin(GRUPOS_ESTAMPADO)]))
+        resultados.append(calc_r('SOLDADURA', 'FABRICA', df[df['Grupo'].isin(GRUPOS_SOLDADURA)]))
+        for g in GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA:
+            resultados.append(calc_r(g, 'LINEA', df[df['Grupo'] == g]))
+            
+        return pd.DataFrame(resultados)
+
+    df_base_editor = calcular_kpis_base(df_m)
+
+    if not df_base_editor.empty and not df_oficial.empty:
+        df_base_editor.set_index(['Nivel', 'Grupo'], inplace=True)
+        df_of_idx = df_oficial.set_index(['Nivel', 'Grupo'])
+        for col in ['Performance', 'Disp', 'Cal', 'Oee']:
+            if col in df_of_idx.columns:
+                valid_vals = df_of_idx[df_of_idx[col] > 0][col]
+                df_base_editor.update(valid_vals)
+        df_base_editor.reset_index(inplace=True)
+    elif df_base_editor.empty:
+        estruct = [{'Nivel': 'GLOBAL', 'Grupo': 'GLOBAL'}, {'Nivel': 'FABRICA', 'Grupo': 'ESTAMPADO'}, {'Nivel': 'FABRICA', 'Grupo': 'SOLDADURA'}]
+        estruct += [{'Nivel': 'LINEA', 'Grupo': g} for g in GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA]
+        df_base_editor = pd.DataFrame(estruct)
+        df_base_editor[['Performance', 'Disp', 'Cal', 'Oee']] = 0.0
+
+    df_oficial_editado = st.data_editor(
+        df_base_editor,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Nivel": st.column_config.TextColumn("Nivel", disabled=True),
+            "Grupo": st.column_config.TextColumn("Grupo", disabled=True),
+            "Performance": st.column_config.NumberColumn("Performance", format="%.4f", step=0.01),
+            "Disp": st.column_config.NumberColumn("Disponibilidad", format="%.4f", step=0.01),
+            "Cal": st.column_config.NumberColumn("Calidad", format="%.4f", step=0.01),
+            "Oee": st.column_config.NumberColumn("OEE", format="%.4f", step=0.01),
         }
+    )
 
-    resultados.append(calc_r('GLOBAL', 'GLOBAL', df))
-    resultados.append(calc_r('ESTAMPADO', 'FABRICA', df[df['Grupo'].isin(GRUPOS_ESTAMPADO)]))
-    resultados.append(calc_r('SOLDADURA', 'FABRICA', df[df['Grupo'].isin(GRUPOS_SOLDADURA)]))
-    for g in GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA:
-        resultados.append(calc_r(g, 'LINEA', df[df['Grupo'] == g]))
+with col_prod:
+    # --- NUEVA SECCIÓN DE EDICIÓN DE CANTIDADES (PRODUCCIÓN) ---
+    st.write("### 2.6. Edición de Cantidades")
+    
+    def calcular_prod_base(df_t_raw, mes_sel):
+        if df_t_raw.empty: return pd.DataFrame()
+        mapa = {str(k).strip().upper(): str(v).strip().upper() for k, v in MAQUINAS_MAP.items()}
+        df = df_t_raw[df_t_raw['Month'] == mes_sel].copy()
+        df['Grupo'] = df['Máquina'].astype(str).str.strip().str.upper().map(mapa).fillna('OTRO')
         
-    return pd.DataFrame(resultados)
+        resultados = []
+        def calc_p(name, nivel, data):
+            if data.empty: return {'Nivel': nivel, 'Grupo': name, 'Totales': 0, 'Scrap': 0, 'Retrabajo': 0}
+            return {
+                'Nivel': nivel, 'Grupo': name,
+                'Totales': int(data['Totales'].sum()),
+                'Scrap': int(data['Observadas'].sum()),
+                'Retrabajo': int(data['Retrabajo'].sum())
+            }
 
-df_base_editor = calcular_kpis_base(df_m)
+        resultados.append(calc_p('GLOBAL', 'GLOBAL', df))
+        resultados.append(calc_p('ESTAMPADO', 'FABRICA', df[df['Grupo'].isin(GRUPOS_ESTAMPADO)]))
+        resultados.append(calc_p('SOLDADURA', 'FABRICA', df[df['Grupo'].isin(GRUPOS_SOLDADURA)]))
+        for g in GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA:
+            resultados.append(calc_p(g, 'LINEA', df[df['Grupo'] == g]))
+            
+        return pd.DataFrame(resultados)
 
-if not df_base_editor.empty and not df_oficial.empty:
-    df_base_editor.set_index(['Nivel', 'Grupo'], inplace=True)
-    df_of_idx = df_oficial.set_index(['Nivel', 'Grupo'])
-    for col in ['Performance', 'Disp', 'Cal', 'Oee']:
-        if col in df_of_idx.columns:
-            valid_vals = df_of_idx[df_of_idx[col] > 0][col]
-            df_base_editor.update(valid_vals)
-    df_base_editor.reset_index(inplace=True)
-elif df_base_editor.empty:
-    estruct = [{'Nivel': 'GLOBAL', 'Grupo': 'GLOBAL'}, {'Nivel': 'FABRICA', 'Grupo': 'ESTAMPADO'}, {'Nivel': 'FABRICA', 'Grupo': 'SOLDADURA'}]
-    estruct += [{'Nivel': 'LINEA', 'Grupo': g} for g in GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA]
-    df_base_editor = pd.DataFrame(estruct)
-    df_base_editor[['Performance', 'Disp', 'Cal', 'Oee']] = 0.0
+    df_base_prod = calcular_prod_base(df_t, m_sel)
+    if df_base_prod.empty:
+        estruct_prod = [{'Nivel': 'GLOBAL', 'Grupo': 'GLOBAL'}, {'Nivel': 'FABRICA', 'Grupo': 'ESTAMPADO'}, {'Nivel': 'FABRICA', 'Grupo': 'SOLDADURA'}]
+        estruct_prod += [{'Nivel': 'LINEA', 'Grupo': g} for g in GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA]
+        df_base_prod = pd.DataFrame(estruct_prod)
+        df_base_prod[['Totales', 'Scrap', 'Retrabajo']] = 0
 
-df_oficial_editado = st.data_editor(
-    df_base_editor,
-    use_container_width=True,
-    hide_index=True,
-    column_config={
-        "Nivel": st.column_config.TextColumn("Nivel", disabled=True),
-        "Grupo": st.column_config.TextColumn("Grupo", disabled=True),
-        "Performance": st.column_config.NumberColumn("Performance", format="%.4f", step=0.01),
-        "Disp": st.column_config.NumberColumn("Disponibilidad", format="%.4f", step=0.01),
-        "Cal": st.column_config.NumberColumn("Calidad", format="%.4f", step=0.01),
-        "Oee": st.column_config.NumberColumn("OEE", format="%.4f", step=0.01),
-    }
-)
+    df_prod_editado = st.data_editor(
+        df_base_prod,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Nivel": st.column_config.TextColumn("Nivel", disabled=True),
+            "Grupo": st.column_config.TextColumn("Grupo", disabled=True),
+            "Totales": st.column_config.NumberColumn("Totales", step=1),
+            "Scrap": st.column_config.NumberColumn("Scrap", step=1),
+            "Retrabajo": st.column_config.NumberColumn("RT", step=1),
+        }
+    )
+
 
 st.divider()
 st.write("### 3. Descargas")
@@ -568,9 +642,9 @@ with cd:
 
 with cp:
     st.subheader("🏭 Producción")
-    if st.button("Preparar Prod Estampado"): st.session_state['pr_e'] = crear_pdf_informe_productivo("Estampado", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt)
+    if st.button("Preparar Prod Estampado"): st.session_state['pr_e'] = crear_pdf_informe_productivo("Estampado", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt, df_prod_editado)
     if 'pr_e' in st.session_state: st.download_button("📥 Bajar Prod Estampado", st.session_state['pr_e'], "FAMMA_Productivo_Vista_ESTAMPADO.pdf")
-    if st.button("Preparar Prod Soldadura"): st.session_state['pr_s'] = crear_pdf_informe_productivo("Soldadura", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt)
+    if st.button("Preparar Prod Soldadura"): st.session_state['pr_s'] = crear_pdf_informe_productivo("Soldadura", f"{m_sel}/{a_sel}", df_t, df_p, m_sel, a_sel, hs_rt, df_prod_editado)
     if 'pr_s' in st.session_state: st.download_button("📥 Bajar Prod Soldadura", st.session_state['pr_s'], "FAMMA_Productivo_Vista_SOLDADURA.pdf")
 
 with cg:
