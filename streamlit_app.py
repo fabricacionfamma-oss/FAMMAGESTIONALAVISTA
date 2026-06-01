@@ -339,53 +339,121 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
     
     pdf = ReportePDF(f"INFORME PRODUCTIVO - {area}", label_reporte, theme_color)
     mapa = {str(k).strip().upper(): str(v).strip().upper() for k, v in MAQUINAS_MAP.items()}
-    df_t = df_trend.copy(); df_p = df_piezas.copy()
-    for d in [df_t, df_p]: d['Grupo'] = d['Máquina'].str.strip().str.upper().map(mapa).fillna('OTRO')
+    
+    df_t = df_trend.copy()
+    df_p = df_piezas.copy()
+    
+    # Limpiar y forzar las piezas a string para evitar recortes numéricos en Plotly
+    if not df_p.empty and 'Pieza' in df_p.columns:
+        df_p['Pieza'] = df_p['Pieza'].astype(str).fillna('S/C')
+        
+    for d in [df_t, df_p]: 
+        if not d.empty and 'Máquina' in d.columns:
+            d['Grupo'] = d['Máquina'].str.strip().str.upper().map(mapa).fillna('OTRO')
     
     grupos = GRUPOS_ESTAMPADO if area.upper() == "ESTAMPADO" else GRUPOS_SOLDADURA
-    paginas = ['GENERAL'] + [g.upper() for g in grupos if g.upper() in df_t['Grupo'].unique()]
+    paginas = ['GENERAL'] + [g.upper() for g in grupos if not df_t.empty and g.upper() in df_t['Grupo'].unique()]
 
     for target in paginas:
-        pdf.add_page(orientation='L'); pdf.add_gradient_background()
+        pdf.add_page(orientation='L')
+        pdf.add_gradient_background()
+        
         df_t_t = df_t if target == 'GENERAL' else df_t[df_t['Grupo'] == target]
         df_p_t = df_p if target == 'GENERAL' else df_p[df_p['Grupo'] == target]
 
-        pdf.set_y(10); pdf.set_fill_color(*theme_color); pdf.set_text_color(255); pdf.set_font("Arial", 'B', 10)
-        pdf.cell(40, 6, f"MES: {mes_sel}", 1, 0, 'C', True); pdf.cell(197, 6, f"PLANTA {area.upper()} - {target}", 1, 0, 'C', True); pdf.cell(40, 6, "PRODUCTIVO", 1, 1, 'C', True)
+        # Encabezado
+        pdf.set_y(10)
+        pdf.set_fill_color(*theme_color)
+        pdf.set_text_color(255)
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(40, 6, f"MES: {mes_sel}", 1, 0, 'C', True)
+        pdf.cell(197, 6, f"PLANTA {area.upper()} - {target}", 1, 0, 'C', True)
+        pdf.cell(40, 6, "PRODUCTIVO", 1, 1, 'C', True)
         
+        # Procesamiento de tendencia productiva
         df_ev = df_t_t.groupby('Month')[['Buenas', 'Observadas', 'Retrabajo', 'Totales']].sum().reset_index()
         df_ev['% Scrap'] = (df_ev['Observadas'] / df_ev['Totales'].replace(0, 1)) * 100
         df_ev['% RT'] = (df_ev['Retrabajo'] / df_ev['Totales'].replace(0, 1)) * 100
         df_ev['Mes'] = df_ev['Month'].map({1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'})
 
         def add_prod_chart(y_col, title, y_pos, target_line, is_pct=True):
-            color = '#E74C3C' if is_pct and df_ev[y_col].iloc[-1] > target_line else '#0F4C81'
-            fig = go.Figure(go.Bar(x=df_ev['Mes'], y=df_ev[y_col], marker_color=color, text=df_ev[y_col], texttemplate='<b>%{text:.2f}%</b>' if is_pct else '<b>%{text:.3s}</b>', textposition='outside'))
-            if target_line: fig.add_hline(y=target_line, line_dash="dash", line_color="#E74C3C", annotation_text=f"Obj: {target_line}%")
-            fig.update_layout(title=dict(text=f"<b>{title}</b>"), margin=dict(t=30, b=20, l=10, r=10), yaxis=dict(visible=False, range=[0, max(target_line*1.5, df_ev[y_col].max()*1.3) if target_line else None]))
-            img = save_chart(fig, 550, 260); pdf.image(img, 11, y_pos, 133); os.remove(img)
+            if df_ev.empty: return
+            # Si el área es estampado, usamos su azul oscuro, caso contrario el naranja de soldadura. Rojo si supera el target.
+            color_base = '#0F4C81' if area.upper() == "ESTAMPADO" else '#D35400'
+            color = '#E74C3C' if is_pct and df_ev[y_col].iloc[-1] > target_line else color_base
+            
+            fig = go.Figure(go.Bar(
+                x=df_ev['Mes'], y=df_ev[y_col], 
+                marker_color=color, text=df_ev[y_col], 
+                texttemplate='<b>%{text:.2f}%</b>' if is_pct else '<b>%{text:.3s}</b>', 
+                textposition='outside'
+            ))
+            
+            if target_line: 
+                fig.add_hline(y=target_line, line_dash="dash", line_color="#E74C3C", annotation_text=f"Obj: {target_line}%")
+            
+            fig.update_layout(
+                title=dict(text=f"<b>{title}</b>", font=dict(size=14), x=0.5, xanchor='center'), 
+                margin=dict(t=35, b=20, l=10, r=10), 
+                yaxis=dict(visible=False, range=[0, max(target_line*1.5 if target_line else 0, df_ev[y_col].max()*1.3) if not df_ev.empty else 1]),
+                paper_bgcolor='rgba(0,0,0,0)', 
+                plot_bgcolor='rgba(0,0,0,0)'
+            )
+            fig.update_traces(cliponaxis=False) # Evita que el texto de arriba se corte
+            
+            img = save_chart(fig, 600, 240)
+            pdf.image(img, 11, y_pos, 133)
+            os.remove(img)
 
-        pdf.draw_panel(10, 22, 135, 60); add_prod_chart('Totales', 'PIEZAS TOTALES', 23, None, False)
-        pdf.draw_panel(10, 85, 135, 60); add_prod_chart('% Scrap', '% SCRAP', 86, target_scrap)
-        pdf.draw_panel(10, 148, 135, 60); add_prod_chart('% RT', '% RE-TRABAJO', 149, target_rt)
+        # Ajuste de coordenadas lado izquierdo (Espacios más limpios y simétricos)
+        pdf.draw_panel(10, 20, 135, 58); add_prod_chart('Totales', 'PIEZAS TOTALES', 22, None, False)
+        pdf.draw_panel(10, 82, 135, 58); add_prod_chart('% Scrap', '% SCRAP', 84, target_scrap)
+        pdf.draw_panel(10, 144, 135, 58); add_prod_chart('% RT', '% RE-TRABAJO', 146, target_rt)
 
+        # Ajuste de coordenadas lado derecho (Top 5s)
         if not df_p_t.empty:
-            pdf.draw_panel(150, 22, 135, 83); pdf.draw_panel(150, 108, 135, 83)
-            ts = df_p_t.groupby('Pieza')['Scrap'].sum().nlargest(5).reset_index().sort_values('Scrap')
-            tr = df_p_t.groupby('Pieza')['RT'].sum().nlargest(5).reset_index().sort_values('RT')
-            f4 = px.bar(ts, x='Scrap', y='Pieza', orientation='h', title="TOP 5 SCRAP", color_discrete_sequence=['#002147'])
-            f5 = px.bar(tr, x='RT', y='Pieza', orientation='h', title="TOP 5 RT", color_discrete_sequence=['#D35400'])
-            for i, f in enumerate([f4, f5]):
-                f.update_layout(margin=dict(t=35, b=20, l=10, r=30), xaxis=dict(visible=False), yaxis=dict(title=""))
-                f.update_traces(texttemplate='<b>%{x}</b>', textposition='outside')
-                img = save_chart(f, 550, 330); pdf.image(img, 151, 23 if i==0 else 109, 133); os.remove(img)
+            # Agrupar y ordenar ascendentemente para que el mayor quede arriba en barras horizontales
+            ts = df_p_t.groupby('Pieza')['Scrap'].sum().nlargest(5).reset_index().sort_values('Scrap', ascending=True)
+            tr = df_p_t.groupby('Pieza')['RT'].sum().nlargest(5).reset_index().sort_values('RT', ascending=True)
 
+            bar_color = ['#0F4C81'] if area.upper() == "ESTAMPADO" else ['#D35400']
+            
+            f4 = px.bar(ts, x='Scrap', y='Pieza', orientation='h', title="<b>TOP 5 SCRAP</b>", color_discrete_sequence=bar_color)
+            f5 = px.bar(tr, x='RT', y='Pieza', orientation='h', title="<b>TOP 5 RT</b>", color_discrete_sequence=bar_color)
+            
+            for i, f in enumerate([f4, f5]):
+                f.update_layout(
+                    title=dict(font=dict(size=14), x=0.5, xanchor='center'),
+                    # CRÍTICO: 'l=120' da espacio para el nombre de pieza. 'r=45' evita que el número se corte
+                    margin=dict(t=40, b=20, l=120, r=45), 
+                    xaxis=dict(visible=False), 
+                    yaxis=dict(title="", type='category', tickfont=dict(size=10)),
+                    paper_bgcolor='rgba(0,0,0,0)', 
+                    plot_bgcolor='rgba(0,0,0,0)'
+                )
+                f.update_traces(texttemplate='<b>%{x}</b>', textposition='outside', cliponaxis=False)
+                
+                if i == 0 and ts['Scrap'].sum() > 0:
+                    pdf.draw_panel(150, 20, 135, 87)
+                    img = save_chart(f, 600, 360)
+                    pdf.image(img, 151, 21, 133)
+                    os.remove(img)
+                elif i == 1 and tr['RT'].sum() > 0:
+                    pdf.draw_panel(150, 111, 135, 87)
+                    img = save_chart(f, 600, 360)
+                    pdf.image(img, 151, 112, 133)
+                    os.remove(img)
+
+        # Cuadro de HS RE-TRABAJO para General de Estampado alineado a los márgenes nuevos
         if target == 'GENERAL' and area.upper() == 'ESTAMPADO':
-            pdf.draw_panel(150, 196, 135, 12, 2, (240,240,240))
-            pdf.set_xy(150, 196); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0); pdf.cell(67, 12, "HS RE-TRABAJO", 0, 0, 'C'); pdf.cell(67, 12, f"{hs_rt:.1f}", 0, 1, 'C')
+            pdf.draw_panel(150, 202, 135, 12, 2, (240,240,240))
+            pdf.set_xy(150, 202)
+            pdf.set_font("Arial", 'B', 10)
+            pdf.set_text_color(0)
+            pdf.cell(67, 12, "HS RE-TRABAJO", 0, 0, 'C')
+            pdf.cell(67, 12, f"{hs_rt:.1f}", 0, 1, 'C')
 
     return pdf.output(dest='S').encode('latin-1')
-
 # ==========================================
 # 5. INTERFAZ STREAMLIT
 # ==========================================
