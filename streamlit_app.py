@@ -357,6 +357,14 @@ def crear_pdf_informe_productivo(area, label_reporte, df_trend, df_piezas, mes_s
             d['Grupo'] = d['Máquina'].str.strip().str.upper().map(mapa).fillna('OTRO')
     
     grupos = GRUPOS_ESTAMPADO if area.upper() == "ESTAMPADO" else GRUPOS_SOLDADURA
+    grupos_upper = [g.upper() for g in grupos]
+    
+    # --- FILTRO CLAVE PARA CORREGIR LA SUMA GENERAL ---
+    # Nos aseguramos de que los datos totales solo contengan grupos del área elegida
+    df_t = df_t[df_t['Grupo'].isin(grupos_upper)]
+    if not df_p.empty and 'Grupo' in df_p.columns:
+        df_p = df_p[df_p['Grupo'].isin(grupos_upper)]
+    # --------------------------------------------------
     
     # Filtrar para que solo aparezcan páginas de líneas activas o editadas con valores > 0
     grupos_activos = set(df_t[df_t['Month'] == mes_sel]['Grupo'].unique()) if not df_t.empty else set()
